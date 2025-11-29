@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({Key? key}) : super(key: key);
@@ -21,6 +22,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   bool _isLoginPasswordVisible = false;
   bool _isSignupPasswordVisible = false;
+  bool _isLoading = false;
+
+  final supabase = Supabase.instance.client;
 
   @override
   void initState() {
@@ -37,6 +41,103 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     _signupEmailController.dispose();
     _signupPasswordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    if (!_loginFormKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await supabase.auth.signInWithPassword(
+        email: _loginEmailController.text.trim(),
+        password: _loginPasswordController.text.trim(),
+      );
+
+      if (response.user != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Welcome back!', style: GoogleFonts.poppins()),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message, style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An error occurred', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleSignup() async {
+    if (!_signupFormKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await supabase.auth.signUp(
+        email: _signupEmailController.text.trim(),
+        password: _signupPasswordController.text.trim(),
+        data: {
+          'full_name': _signupNameController.text.trim(),
+        },
+      );
+
+      if (response.user != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Account created! Please check your email to verify.',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+          // Switch to login tab
+          _tabController.animateTo(0);
+        }
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message, style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An error occurred', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -97,25 +198,14 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
               // Tab Bar
               Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+
                 padding: const EdgeInsets.all(4),
                 child: TabBar(
                   controller: _tabController,
                   indicator: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+
                   ),
-                  labelColor: Colors.blue.shade700,
                   unselectedLabelColor: Colors.grey.shade600,
                   labelStyle: GoogleFonts.poppins(
                     fontSize: 16,
@@ -201,8 +291,48 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
-                onPressed: () {
+                onPressed: () async {
                   // Handle forgot password
+                  final email = _loginEmailController.text.trim();
+                  if (email.isEmpty || !email.contains('@')) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Please enter your email first',
+                          style: GoogleFonts.poppins(),
+                        ),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  try {
+                    await supabase.auth.resetPasswordForEmail(email);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Password reset email sent!',
+                            style: GoogleFonts.poppins(),
+                          ),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Failed to send reset email',
+                            style: GoogleFonts.poppins(),
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
                 },
                 child: Text(
                   'Forgot Password?',
@@ -215,20 +345,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () {
-                if (_loginFormKey.currentState!.validate()) {
-                  // Handle login
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Logging in...',
-                        style: GoogleFonts.poppins(),
-                      ),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-              },
+              onPressed: _isLoading ? null : _handleLogin,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue.shade700,
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -237,7 +354,16 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                 ),
                 elevation: 0,
               ),
-              child: Text(
+              child: _isLoading
+                  ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+                  : Text(
                 'Login',
                 style: GoogleFonts.poppins(
                   fontSize: 16,
@@ -245,14 +371,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                   color: Colors.white,
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            _buildDivider(),
-            const SizedBox(height: 24),
-            _buildSocialButton(
-              label: 'Continue with Google',
-              icon: Icons.g_mobiledata,
-              onPressed: () {},
             ),
           ],
         ),
@@ -323,20 +441,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 32),
             ElevatedButton(
-              onPressed: () {
-                if (_signupFormKey.currentState!.validate()) {
-                  // Handle signup
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Creating account...',
-                        style: GoogleFonts.poppins(),
-                      ),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-              },
+              onPressed: _isLoading ? null : _handleSignup,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue.shade700,
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -345,7 +450,16 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                 ),
                 elevation: 0,
               ),
-              child: Text(
+              child: _isLoading
+                  ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+                  : Text(
                 'Sign Up',
                 style: GoogleFonts.poppins(
                   fontSize: 16,
@@ -353,14 +467,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                   color: Colors.white,
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            _buildDivider(),
-            const SizedBox(height: 24),
-            _buildSocialButton(
-              label: 'Continue with Google',
-              icon: Icons.g_mobiledata,
-              onPressed: () {},
             ),
           ],
         ),
@@ -411,59 +517,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         ),
       ),
       validator: validator,
-    );
-  }
-
-  Widget _buildDivider() {
-    return Row(
-      children: [
-        Expanded(child: Divider(color: Colors.grey.shade300)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text(
-            'OR',
-            style: GoogleFonts.poppins(
-              color: Colors.grey.shade600,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-        Expanded(child: Divider(color: Colors.grey.shade300)),
-      ],
-    );
-  }
-
-  Widget _buildSocialButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        side: BorderSide(color: Colors.grey.shade300),
-        backgroundColor: Colors.white,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: Colors.black87, size: 24),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
