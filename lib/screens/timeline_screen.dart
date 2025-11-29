@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'trip_detail_screen.dart';
 
 class TimelineScreen extends StatefulWidget {
@@ -10,53 +11,71 @@ class TimelineScreen extends StatefulWidget {
 }
 
 class _TimelineScreenState extends State<TimelineScreen> {
-  List<Map<String, dynamic>> trips = [
-    {
-      "title": "Tokyo, Japan",
-      "date": "Oct 15, 2023",
-      "desc": "Explored vibrant Shibuya crossing and enjoyed delicious ramen.",
-      "image": "assets/images/tokyo.jpg"
-    },
-    {
-      "title": "Paris, France",
-      "date": "Sep 01, 2023",
-      "desc": "Walked along the Seine, saw the Louvre. Indulged in croissants.",
-      "image": "assets/images/paris.jpg"
-    },
-    {
-      "title": "Rome, Italy",
-      "date": "Aug 10, 2023",
-      "desc": "Visited ancient Roman ruins, tossed a coin in the Trevi Fountain.",
-      "image": "assets/images/rome.jpg"
-    },
-    {
-      "title": "New York City, USA",
-      "date": "Jul 20, 2023",
-      "desc": "Explored Times Square, walked through Central Park, and saw Broadway.",
-      "image": "assets/images/nyc.jpg"
-    },
-    {
-      "title": "Sydney, Australia",
-      "date": "Jun 05, 2023",
-      "desc": "Relaxed on Bondi Beach, marvelled at the Opera House.",
-      "image": "assets/images/sydney.jpg"
-    },
-  ];
+  final supabase = Supabase.instance.client;
 
-  void _addNewMemory(Map<String, dynamic> newTrip) {
-    setState(() {
-      // Add the new trip to the beginning of the list
-      trips.insert(0, newTrip);
-    });
+  List<Map<String, dynamic>> trips = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTripsFromSupabase();
+  }
+
+  Future<void> _loadTripsFromSupabase() async {
+    try {
+      final userId = supabase.auth.currentUser!.id;
+
+      final response = await supabase
+          .from('travel_entries')
+          .select()
+          .eq('user_id', userId)
+          .order('id', ascending: false);
+
+      List<Map<String, dynamic>> formatted = [];
+
+      for (final row in response) {
+        final String? startDate = row['visit_start_date'];
+        final String? endDate = row['visit_end_date'];
+
+        String dateRange = '';
+
+        if (startDate != null && startDate.isNotEmpty) {
+          if (endDate != null && endDate.isNotEmpty && endDate != startDate) {
+            dateRange = '$startDate – $endDate';
+          } else {
+            dateRange = startDate;
+          }
+        }
+
+        formatted.add({
+          "id": row['id'],
+          "title": row['title'],
+          "desc": row['description'],
+          "image_url": row['image_url'],
+          "lat": row['latitude'],
+          "lng": row['longitude'],
+          "date_range": dateRange,
+          "visit_start_date": row['visit_start_date'],
+          "visit_end_date": row['visit_end_date'],
+        });
+      }
+
+      setState(() {
+        trips = formatted;
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint("Error loading trips: $e");
+      setState(() => isLoading = false);
+    }
   }
 
   Future<void> _navigateToMap() async {
-    // Navigate to map screen and wait for result
     final result = await Navigator.pushNamed(context, '/map');
 
-    // If we got data back, add it to the timeline
-    if (result != null && result is Map<String, dynamic>) {
-      _addNewMemory(result);
+    if (result != null) {
+      _loadTripsFromSupabase();
     }
   }
 
@@ -79,163 +98,14 @@ class _TimelineScreenState extends State<TimelineScreen> {
           IconButton(
             icon: const Icon(Icons.map, color: Color(0xFF3D8BFF)),
             onPressed: _navigateToMap,
-            tooltip: 'Add from Map',
           ),
         ],
       ),
-      body: trips.isEmpty
-          ? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.explore_off,
-              size: 80,
-              color: Colors.grey[300],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No memories yet',
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[400],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tap the map icon to add your first memory',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey[400],
-              ),
-            ),
-          ],
-        ),
-      )
-          : ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: trips.length,
-        itemBuilder: (context, index) {
-          final trip = trips[index];
-          return GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => TripDetailScreen(trip: trip),
-                ),
-              );
-            },
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  )
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Image Section
-                  ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(14),
-                      topRight: Radius.circular(14),
-                    ),
-                    child: trip["image"] != null
-                        ? Image.asset(
-                      trip["image"]!,
-                      width: double.infinity,
-                      height: 180,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return _buildPlaceholderImage();
-                      },
-                    )
-                        : _buildPlaceholderImage(),
-                  ),
-                  // Content Section
-                  Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                trip["title"]!,
-                                style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            if (index == 0) // Show "New" badge for latest entry
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF3D8BFF),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  'NEW',
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.calendar_today,
-                              size: 12,
-                              color: Colors.grey,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              trip["date"]!,
-                              style: GoogleFonts.poppins(
-                                color: Colors.grey,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          trip["desc"]!,
-                          style: GoogleFonts.poppins(
-                            color: Colors.black87,
-                            fontSize: 13,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  )
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : trips.isEmpty
+          ? _buildEmptyState()
+          : _buildTimelineList(),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _navigateToMap,
         backgroundColor: const Color(0xFF3D8BFF),
@@ -244,6 +114,141 @@ class _TimelineScreenState extends State<TimelineScreen> {
           'Add Memory',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineList() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: trips.length,
+      itemBuilder: (context, index) {
+        final trip = trips[index];
+
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => TripDetailScreen(trip: trip),
+              ),
+            );
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black12.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                )
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(14),
+                    topRight: Radius.circular(14),
+                  ),
+                  child: trip["image_url"] != null &&
+                      trip["image_url"].toString().startsWith("http")
+                      ? Image.network(
+                    trip["image_url"],
+                    width: double.infinity,
+                    height: 180,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return _buildPlaceholderImage();
+                    },
+                    errorBuilder: (_, __, ___) =>
+                        _buildPlaceholderImage(),
+                  )
+                      : _buildPlaceholderImage(),
+                ),
+
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        trip["title"] ?? "Unknown Location",
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+
+                      if ((trip["date_range"] ?? '').isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.calendar_today,
+                                  size: 12, color: Colors.grey),
+                              const SizedBox(width: 6),
+                              Text(
+                                trip["date_range"],
+                                style: GoogleFonts.poppins(
+                                  color: Colors.grey,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      const SizedBox(height: 8),
+                      Text(
+                        trip["desc"] ?? "",
+                        style: GoogleFonts.poppins(
+                          color: Colors.black87,
+                          fontSize: 13,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                )
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.explore_off, size: 80, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          Text(
+            'No memories yet',
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[400],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Tap the map icon to add your first memory',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.grey[400],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -263,11 +268,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
         ),
       ),
       child: const Center(
-        child: Icon(
-          Icons.photo_camera,
-          size: 60,
-          color: Colors.white70,
-        ),
+        child: Icon(Icons.photo_camera,
+            size: 60, color: Colors.white70),
       ),
     );
   }
