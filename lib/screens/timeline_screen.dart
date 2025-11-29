@@ -48,16 +48,24 @@ class _TimelineScreenState extends State<TimelineScreen> {
           }
         }
 
+        /// 🔥 FIX: image_url is ARRAY, not single string
+        List<dynamic>? imgs = row['image_url'];
+
+        /// 🔥 Pick first image for cover photo
+        String? coverImage =
+        (imgs != null && imgs.isNotEmpty) ? imgs.first.toString() : null;
+
         formatted.add({
           "id": row['id'],
           "title": row['title'],
           "desc": row['description'],
-          "image_url": row['image_url'],
+          "image_url": imgs,       // full list for detail screen
+          "cover_image": coverImage,
           "lat": row['latitude'],
           "lng": row['longitude'],
           "date_range": dateRange,
-          "visit_start_date": row['visit_start_date'],
-          "visit_end_date": row['visit_end_date'],
+          "visit_start_date": startDate,
+          "visit_end_date": endDate,
         });
       }
 
@@ -73,10 +81,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   Future<void> _navigateToMap() async {
     final result = await Navigator.pushNamed(context, '/map');
-
-    if (result != null) {
-      _loadTripsFromSupabase();
-    }
+    if (result != null) _loadTripsFromSupabase();
   }
 
   @override
@@ -150,26 +155,13 @@ class _TimelineScreenState extends State<TimelineScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                /// 🔥 Cover image (first image)
                 ClipRRect(
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(14),
                     topRight: Radius.circular(14),
                   ),
-                  child: trip["image_url"] != null &&
-                      trip["image_url"].toString().startsWith("http")
-                      ? Image.network(
-                    trip["image_url"],
-                    width: double.infinity,
-                    height: 180,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return _buildPlaceholderImage();
-                    },
-                    errorBuilder: (_, __, ___) =>
-                        _buildPlaceholderImage(),
-                  )
-                      : _buildPlaceholderImage(),
+                  child: _buildCoverImage(trip["cover_image"]),
                 ),
 
                 Padding(
@@ -225,6 +217,24 @@ class _TimelineScreenState extends State<TimelineScreen> {
     );
   }
 
+  Widget _buildCoverImage(String? imageUrl) {
+    if (imageUrl != null && imageUrl.startsWith("http")) {
+      return Image.network(
+        imageUrl,
+        width: double.infinity,
+        height: 180,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return _buildPlaceholderImage();
+        },
+        errorBuilder: (_, __, ___) => _buildPlaceholderImage(),
+      );
+    }
+
+    return _buildPlaceholderImage();
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -268,8 +278,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
         ),
       ),
       child: const Center(
-        child: Icon(Icons.photo_camera,
-            size: 60, color: Colors.white70),
+        child: Icon(Icons.photo_camera, size: 60, color: Colors.white70),
       ),
     );
   }

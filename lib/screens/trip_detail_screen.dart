@@ -1,3 +1,5 @@
+// FULL UPDATED FILE — MULTI IMAGE, DELETE, EDIT DETAILS ADDED
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,123 +19,160 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
   final supabase = Supabase.instance.client;
   final ImagePicker _picker = ImagePicker();
 
-  List<String> photoMemories = [];
-  bool isLoadingPhotos = true;
+  List<String> imageList = [];
   bool isUploading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPhotoMemories();
+    _loadImagesFromTrip();
   }
 
-  // ------------------------------------------------
-  // LOAD EXTRA PHOTOS FROM DB
-  // ------------------------------------------------
-  Future<void> _loadPhotoMemories() async {
-    setState(() => isLoadingPhotos = true);
+  // ---------------------------------------------
+  // LOAD IMAGES FROM travel_entries.image_url ARRAY
+  // ---------------------------------------------
+  void _loadImagesFromTrip() {
+    final imgs = widget.trip['image_url'];
 
-    try {
-      final res = await supabase
-          .from('memory_photos')
-          .select('image_url')
-          .eq('trip_id', widget.trip['id']);
-
-      setState(() {
-        photoMemories =
-            res.map<String>((e) => e['image_url'] as String).toList();
-        isLoadingPhotos = false;
-      });
-    } catch (e) {
-      debugPrint("Photo load error: $e");
-      setState(() => isLoadingPhotos = false);
-    }
+    setState(() {
+      if (imgs is List) {
+        imageList = imgs.map((e) => e.toString()).toList();
+      } else {
+        imageList = [];
+      }
+    });
   }
 
-  // ------------------------------------------------
-  // DATE CALCULATION
-  // ------------------------------------------------
-  int? _calculateDuration() {
-    final start = _parseDate(widget.trip['visit_start_date']);
-    final end = _parseDate(widget.trip['visit_end_date']);
-
-    if (start != null && end != null) {
-      return end.difference(start).inDays + 1;
-    }
-    return null;
-  }
-
-  DateTime? _parseDate(String? textDate) {
-    if (textDate == null || textDate.isEmpty) return null;
-
-    try {
-      final parts = textDate.split(' ');
-      final months = {
-        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4,
-        'May': 5, 'Jun': 6, 'Jul': 7, 'Aug': 8,
-        'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
-      };
-
-      return DateTime(
-        int.parse(parts[2].replaceAll(',', '')),
-        months[parts[0]]!,
-        int.parse(parts[1].replaceAll(',', '')),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // ------------------------------------------------
-  // ADD PHOTO → STORAGE + DB ✅ FIXED
-  // ------------------------------------------------
-  Future<void> _addPhoto() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
+  // ---------------------------------------------
+  // MULTIPLE IMAGE PICKER + UPLOAD
+  // ---------------------------------------------
+  Future<void> _addPhotos() async {
+    final pickedFiles = await _picker.pickMultiImage();
+    if (pickedFiles.isEmpty) return;
 
     setState(() => isUploading = true);
 
     try {
       final user = supabase.auth.currentUser!;
-      final file = File(picked.path);
+      List<String> newUrls = [];
 
-      final fileName =
-          'extra_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final path = '${user.id}/$fileName';
+      for (int i = 0; i < pickedFiles.length; i++) {
+        final file = File(pickedFiles[i].path);
 
-      await supabase.storage
-          .from('Memories')
-          .upload(path, file, fileOptions: const FileOptions(upsert: true));
+        final fileName =
+            '${user.id}/${DateTime.now().millisecondsSinceEpoch}_${imageList.length + i}.jpg';
 
-      final imageUrl =
-      supabase.storage.from('Memories').getPublicUrl(path);
+        await supabase.storage.from("Memories").upload(
+          fileName,
+          file,
+          fileOptions:
+          const FileOptions(cacheControl: '3600', upsert: false),
+        );
 
-      await supabase.from('memory_photos').insert({
-        'trip_id': widget.trip['id'],
-        'image_url': imageUrl,
+        final imageUrl =
+        supabase.storage.from("Memories").getPublicUrl(fileName);
+
+        newUrls.add(imageUrl);
+      }
+
+      // Update final array
+      final updatedArray = [...imageList, ...newUrls];
+
+      await supabase
+          .from("travel_entries")
+          .update({"image_url": updatedArray}).eq("id", widget.trip['id']);
+
+      setState(() {
+        imageList = updatedArray;
       });
 
-      await _loadPhotoMemories();
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("✅ Photo added successfully")),
+        const SnackBar(content: Text("Photos added successfully")),
       );
     } catch (e) {
-      debugPrint("Add photo error: $e");
+      debugPrint("Upload error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("❌ Failed to add photo")),
+        SnackBar(content: Text("Failed: $e")),
       );
-    } finally {
-      setState(() => isUploading = false);
+    }
+
+    setState(() => isUploading = false);
+  }
+
+  // ---------------------------------------------
+  // DELETE ONE IMAGE
+  // ---------------------------------------------
+  Future<void> _deleteImage(String url) async {
+    final path = url.split("/Memories/").last; // extract path after bucket
+
+    try {
+      // Delete from bucket
+      await supabase.storage.from("Memories").remove([path]);
+
+      // Remove locally
+      final updatedList = [...imageList]..remove(url);
+
+      // Update database
+      await supabase
+          .from("travel_entries")
+          .update({"image_url": updatedList}).eq("id", widget.trip['id']);
+
+      setState(() => imageList = updatedList);
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Delete failed: $e")));
     }
   }
 
-  // ------------------------------------------------
+  // ---------------------------------------------
+  // EDIT TITLE + DESCRIPTION
+  // ---------------------------------------------
+  Future<void> _editDetails() async {
+    final titleController =
+    TextEditingController(text: widget.trip['title'] ?? "");
+    final descController =
+    TextEditingController(text: widget.trip['desc'] ?? "");
+
+    await showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text("Edit Memory"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: titleController, decoration: const InputDecoration(labelText: "Title")),
+            TextField(controller: descController, decoration: const InputDecoration(labelText: "Description")),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text("Cancel")),
+          ElevatedButton(
+              onPressed: () async {
+                await supabase.from("travel_entries").update({
+                  "title": titleController.text,
+                  "desc": descController.text,
+                }).eq("id", widget.trip['id']);
+
+                // Update local widget.trip
+                widget.trip['title'] = titleController.text;
+                widget.trip['desc'] = descController.text;
+
+                setState(() {});
+                Navigator.pop(c);
+              },
+              child: const Text("Save"))
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------
   // UI
-  // ------------------------------------------------
+  // ---------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final duration = _calculateDuration();
+    String? mainImg =
+    imageList.isNotEmpty ? imageList.first : widget.trip['image_url'];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FC),
@@ -145,6 +184,15 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           widget.trip['title'] ?? 'Trip Details',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
+
+        // ADD EDIT BUTTON HERE
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit, color: Colors.black87),
+            onPressed: _editDetails,
+          )
+        ],
+
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black87),
           onPressed: () => Navigator.pop(context),
@@ -155,112 +203,124 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _mainImage(),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: mainImg != null
+                  ? Image.network(mainImg,
+                  height: 220, width: double.infinity, fit: BoxFit.cover)
+                  : _placeholder(),
+            ),
+
             const SizedBox(height: 16),
-            _visitInfo(duration),
+
+            _infoCard(),
             const SizedBox(height: 16),
-            _notes(),
+
+            _notesSection(),
             const SizedBox(height: 16),
-            _photoSection(),
+
+            _photosSection(),
           ],
         ),
       ),
     );
   }
 
-  // ------------------------------------------------
-  // UI COMPONENTS
-  // ------------------------------------------------
-  Widget _mainImage() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: widget.trip['image_url'] != null
-          ? Image.network(
-        widget.trip['image_url'],
-        height: 220,
-        width: double.infinity,
-        fit: BoxFit.cover,
-      )
-          : _placeholder(),
-    );
-  }
-
-  Widget _visitInfo(int? duration) {
+  // ---------------------------------------------
+  // Info Card
+  // ---------------------------------------------
+  Widget _infoCard() {
     return _card(
       "Visit Details",
       [
-        _row(Icons.date_range, "From",
-            widget.trip['visit_start_date'] ?? "N/A"),
-        _row(Icons.date_range, "To",
-            widget.trip['visit_end_date'] ?? "N/A"),
-        if (duration != null)
-          _row(Icons.timelapse, "Duration", "$duration days"),
-        if (widget.trip['lat'] != null && widget.trip['lng'] != null)
-          _row(Icons.location_on, "Coordinates",
-              "${widget.trip['lat']}, ${widget.trip['lng']}"),
+        _row(Icons.date_range, "From", widget.trip['visit_start_date'] ?? "N/A"),
+        _row(Icons.date_range, "To", widget.trip['visit_end_date'] ?? "N/A"),
+        if (widget.trip['lat'] != null)
+          _row(Icons.location_on, "Lat", widget.trip['lat'].toString()),
+        if (widget.trip['lng'] != null)
+          _row(Icons.location_on, "Lng", widget.trip['lng'].toString()),
       ],
     );
   }
 
-  Widget _notes() {
-    return _card("My Notes", [
-      Text(
-        widget.trip['desc'] ?? "No description available",
-        style: GoogleFonts.poppins(height: 1.5),
-      ),
-    ]);
+  // ---------------------------------------------
+  // Notes
+  // ---------------------------------------------
+  Widget _notesSection() {
+    return _card(
+      "My Notes",
+      [
+        Text(
+          widget.trip['desc'] ?? "No description available",
+          style: GoogleFonts.poppins(height: 1.5),
+        )
+      ],
+    );
   }
 
-  Widget _photoSection() {
+  // ---------------------------------------------
+  // PHOTO SCROLLER + DELETE
+  // ---------------------------------------------
+  Widget _photosSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text("Photo Memories",
+        Text("All Photos",
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
-
-        if (isLoadingPhotos)
-          const Center(child: CircularProgressIndicator()),
 
         SizedBox(
           height: 110,
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              GestureDetector(
-                onTap: isUploading ? null : _addPhoto,
-                child: _addTile(),
-              ),
+              GestureDetector(onTap: _addPhotos, child: _addTile()),
               const SizedBox(width: 10),
-
-              if (widget.trip['image_url'] != null &&
-                  !photoMemories.contains(widget.trip['image_url']))
-                _photoTile(widget.trip['image_url']),
-
-              ...photoMemories.map(_photoTile),
+              ...imageList.map((url) => GestureDetector(
+                onLongPress: () {
+                  // Confirm delete
+                  showDialog(
+                    context: context,
+                    builder: (c) => AlertDialog(
+                      title: const Text("Delete Photo?"),
+                      content: const Text("This cannot be undone."),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(c),
+                            child: const Text("Cancel")),
+                        ElevatedButton(
+                            onPressed: () async {
+                              Navigator.pop(c);
+                              await _deleteImage(url);
+                            },
+                            child: const Text("Delete"))
+                      ],
+                    ),
+                  );
+                },
+                child: _photoTile(url),
+              )),
             ],
           ),
-        ),
+        )
       ],
     );
   }
 
-  // ------------------------------------------------
-  // SHARED WIDGETS
-  // ------------------------------------------------
+  // ---------------------------------------------
+  // Shared Widgets
+  // ---------------------------------------------
   Widget _card(String title, List<Widget> children) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
+          color: Colors.white, borderRadius: BorderRadius.circular(12)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title,
             style:
             GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
-        ...children,
+        ...children
       ]),
     );
   }
@@ -285,8 +345,8 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       padding: const EdgeInsets.only(right: 10),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child:
-        Image.network(url, width: 120, height: 100, fit: BoxFit.cover),
+        child: Image.network(url,
+            width: 120, height: 100, fit: BoxFit.cover),
       ),
     );
   }
@@ -296,8 +356,9 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       width: 120,
       height: 100,
       decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(10)),
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: isUploading
           ? const Center(child: CircularProgressIndicator())
           : const Icon(Icons.add_a_photo_outlined,
