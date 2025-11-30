@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({Key? key}) : super(key: key);
@@ -10,227 +11,556 @@ class StatsScreen extends StatefulWidget {
 }
 
 class _StatsScreenState extends State<StatsScreen> {
-  // Sample summary numbers
-  final int placesVisited = 150;
-  final int countriesExplored = 25;
-  final String distanceTraveled = '85,000 km';
+  final supabase = Supabase.instance.client;
 
-  // sample bar data (monthly trips)
-  final List<int> monthlyTrips = [1, 2, 3, 2, 4, 5, 3, 2, 3, 2, 1, 2];
+  bool _isLoading = true;
 
-  // sample pie data (countries distribution)
-  final Map<String, double> countries = {
-    'France': 25,
-    'Italy': 20,
-    'Japan': 30,
-    'USA': 15,
-    'Canada': 10,
-  };
+  // Statistics from database
+  int totalEntries = 0;
+  int totalCountries = 0;
+  int totalCities = 0;
+  List<String> countriesVisited = [];
+  List<String> citiesVisited = [];
+  String? firstTripDate;
+  String? lastTripDate;
 
-  // sample line data (distance trend)
-  final List<double> distanceTrend = [0.8, 1.2, 2.3, 1.8, 2.7, 2.2]; // in 'k' (thousands)
+  // Calculated data
+  Map<String, int> monthlyTrips = {};
+  Map<String, int> countryDistribution = {};
+  List<Map<String, dynamic>> recentEntries = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatistics();
+  }
+
+  Future<void> _loadStatistics() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // Fetch statistics from travel_statistics table
+      final statsResponse = await supabase
+          .from('travel_statistics')
+          .select()
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (statsResponse != null) {
+        totalEntries = statsResponse['total_entries'] ?? 0;
+        totalCountries = statsResponse['total_countries'] ?? 0;
+        totalCities = statsResponse['total_cities'] ?? 0;
+        firstTripDate = statsResponse['first_trip_date'];
+        lastTripDate = statsResponse['last_trip_date'];
+
+        // Parse countries and cities from JSONB
+        final countriesJson = statsResponse['countries_visited'];
+        if (countriesJson is List) {
+          countriesVisited = List<String>.from(countriesJson);
+        }
+
+        final citiesJson = statsResponse['cities_visited'];
+        if (citiesJson is List) {
+          citiesVisited = List<String>.from(citiesJson);
+        }
+      }
+
+      // Fetch actual entries for detailed analysis
+      final entries = await supabase
+          .from('travel_entries')
+          .select()
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false);
+
+      if (entries.isNotEmpty) {
+        // Calculate monthly trips for current year
+        _calculateMonthlyTrips(entries);
+
+        // Calculate country distribution
+        _calculateCountryDistribution(entries);
+
+        // Get recent entries
+        recentEntries = entries.take(5).toList().cast<Map<String, dynamic>>();
+      }
+
+      setState(() => _isLoading = false);
+    } catch (e) {
+      print('Error loading statistics: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _calculateMonthlyTrips(List<dynamic> entries) {
+    final currentYear = DateTime.now().year;
+    final monthCounts = <String, int>{};
+
+    for (var entry in entries) {
+      final visitDate = entry['visit_start_date'] as String?;
+      if (visitDate != null) {
+        try {
+          final parts = visitDate.split(' ');
+          if (parts.length >= 3) {
+            final monthStr = parts[0];
+            final year = int.tryParse(parts[2].replaceAll(',', ''));
+
+            if (year == currentYear) {
+              monthCounts[monthStr] = (monthCounts[monthStr] ?? 0) + 1;
+            }
+          }
+        } catch (e) {
+          // Skip if date parsing fails
+        }
+      }
+    }
+
+    monthlyTrips = monthCounts;
+  }
+
+  void _calculateCountryDistribution(List<dynamic> entries) {
+    final countryCount = <String, int>{};
+
+    for (var entry in entries) {
+      final country = entry['country_name'];
+      if (country != null) {
+        countryCount[country] = (countryCount[country] ?? 0) + 1;
+      }
+    }
+
+    // Sort and get top 5
+    final sortedCountries = countryCount.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    countryDistribution = Map.fromEntries(sortedCountries.take(5));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final themeBlue = const Color(0xFF3D8BFF);
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F8FC),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: true,
-        title: Text(
-          'Statistics',
-          style: GoogleFonts.poppins(
-            color: Colors.black87,
-            fontWeight: FontWeight.w600,
-            fontSize: 18,
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF8F8FC),
+        appBar: _buildAppBar(),
+        body: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF3D8BFF),
           ),
         ),
-      ),
+      );
+    }
+
+    if (totalEntries == 0) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF8F8FC),
+        appBar: _buildAppBar(),
+        body: _buildEmptyState(),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F8FC),
+      appBar: _buildAppBar(),
       body: SafeArea(
-          child: LayoutBuilder(builder: (context, constraints) {
+        child: LayoutBuilder(
+          builder: (context, constraints) {
             final double availH = constraints.maxHeight;
             final double availW = constraints.maxWidth;
-
-            // chart heights scale with available height
             final double barChartH = (availH * 0.20).clamp(110.0, 200.0);
-            final double pieChartH = (availH * 0.18).clamp(100.0, 160.0);
-            final double lineChartH = (availH * 0.28).clamp(140.0, 260.0);
 
-            // For small widths, switch stat cards to vertical stack using Wrap
-            final bool narrow = availW < 380;
+            // Increased pie chart height for more vertical space
+            final double pieChartH = (availH * 0.25).clamp(140.0, 220.0);
 
-            return SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, kBottomNavigationBarHeight + 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // --- Stat cards: use Wrap so they can wrap on small widths ---
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: _statCard('Places Visited', placesVisited.toString(), Icons.place, Colors.orange),
-                      ),
-                      SizedBox(
-                        width: double.infinity,
-                        child: _statCard('Countries Explored', countriesExplored.toString(), Icons.public, Colors.green),
-                      ),
-                      SizedBox(
-                        width: double.infinity,
-                        child: _statCard('Distance Traveled', distanceTraveled, Icons.trending_up, Colors.pink),
-                      ),
-                      // placeholder for alignment (keeps grid feel on larger widths)
-                      if (!narrow)
-                        SizedBox(
-                          width: (availW - 12) / 2,
-                          child: const SizedBox.shrink(),
-                        ),
-                    ],
-                  ),
+            return RefreshIndicator(
+              onRefresh: _loadStatistics,
+              color: const Color(0xFF3D8BFF),
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, kBottomNavigationBarHeight + 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Summary Cards
+                    _buildSummaryCards(),
 
-                  const SizedBox(height: 18),
+                    const SizedBox(height: 18),
 
-                  // --- Travel summary (with bar chart) ---
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEFF6FF),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Travel Summary 2024', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _summaryMini('Trips:', '18'),
-                            _summaryMini('Days Traveled:', '60'),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        const Divider(thickness: 1, height: 6, color: Colors.black12),
-                        const SizedBox(height: 12),
-                        SizedBox(height: barChartH, child: _buildBarChart()),
-                      ],
-                    ),
-                  ),
+                    // Journey Timeline
+                    if (firstTripDate != null && lastTripDate != null)
+                      _buildJourneyTimeline(),
 
-                  const SizedBox(height: 18),
+                    const SizedBox(height: 18),
 
-                  // --- Pie chart + Legend ---
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Countries Explored', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: pieChartH,
-                          child: Row(
-                            children: [
-                              // Pie chart should flex to available width
-                              Flexible(
-                                flex: 3,
-                                child: Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: _buildPieChart(),
-                                ),
-                              ),
+                    // Monthly Activity
+                    if (monthlyTrips.isNotEmpty)
+                      _buildMonthlyActivity(barChartH),
 
-                              // Legend: allow scrolling vertically if there are many items, and wrap text
-                              Flexible(
-                                flex: 4,
-                                child: SingleChildScrollView(
-                                  physics: const BouncingScrollPhysics(),
-                                  child: _buildCountriesLegend(maxWidth: availW * 0.45),
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      ],
-                    ),
-                  ),
+                    const SizedBox(height: 18),
 
-                  const SizedBox(height: 18),
+                    // Country Distribution
+                    if (countryDistribution.isNotEmpty)
+                      _buildCountryDistribution(pieChartH, availW),
 
-                  // --- Line chart ---
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Distance Traveled Trend', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
-                        const SizedBox(height: 12),
-                        SizedBox(height: lineChartH, child: _buildLineChart()),
-                      ],
-                    ),
-                  ),
+                    const SizedBox(height: 18),
 
-                  const SizedBox(height: 24),
-                ],
+                    // Recent Memories
+                    if (recentEntries.isNotEmpty)
+                      _buildRecentMemories(),
+
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             );
           },
-          )),
+        ),
+      ),
     );
   }
 
-  Widget _statCard(String title, String value, IconData icon, Color iconColor) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-      child: Row(
+  AppBar _buildAppBar() {
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      centerTitle: true,
+      title: Text(
+        'Statistics',
+        style: GoogleFonts.poppins(
+          color: Colors.black87,
+          fontWeight: FontWeight.w600,
+          fontSize: 18,
+        ),
+      ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, color: Color(0xFF3D8BFF)),
+          onPressed: _loadStatistics,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: iconColor.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, color: iconColor, size: 20),
+          Icon(
+            Icons.bar_chart_outlined,
+            size: 80,
+            color: Colors.grey[300],
           ),
-          const SizedBox(width: 12),
-          // Use Expanded so long titles/values wrap instead of overflowing
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade700)),
-              const SizedBox(height: 6),
-              Text(value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 18)),
-            ]),
+          const SizedBox(height: 16),
+          Text(
+            'No travel data yet',
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[400],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Start adding memories to see your stats',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.grey[400],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _summaryMini(String label, String value) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade700)),
-      const SizedBox(height: 6),
-      Text(value, style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
-    ]);
+  Widget _buildSummaryCards() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: _statCard(
+            'Total Memories',
+            totalEntries.toString(),
+            Icons.collections_bookmark,
+            Colors.blue,
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: _statCard(
+            'Countries Visited',
+            totalCountries.toString(),
+            Icons.public,
+            Colors.green,
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: _statCard(
+            'Cities Explored',
+            totalCities.toString(),
+            Icons.location_city,
+            Colors.orange,
+          ),
+        ),
+      ],
+    );
   }
 
-  // -------- Bar chart ----------
+  Widget _buildJourneyTimeline() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.timeline,
+                color: Color(0xFF3D8BFF),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Your Journey',
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _journeyMini('First Trip', firstTripDate!),
+              Container(
+                width: 1,
+                height: 40,
+                color: Colors.grey[300],
+              ),
+              _journeyMini('Latest Trip', lastTripDate!),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthlyActivity(double chartHeight) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Monthly Activity ${DateTime.now().year}',
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: chartHeight,
+            child: _buildBarChart(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCountryDistribution(double chartHeight, double availWidth) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18), // Increased padding
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Top Countries',
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 20), // Increased spacing
+          SizedBox(
+            height: chartHeight,
+            child: Row(
+              children: [
+                Flexible(
+                  flex: 3,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: _buildPieChart(),
+                  ),
+                ),
+                Flexible(
+                  flex: 2,
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: _buildCountriesLegend(maxWidth: availWidth * 0.45),
+                  ),
+                ),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentMemories() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Recent Memories',
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...recentEntries.map((entry) => _recentMemoryTile(entry)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statCard(String title, String value, IconData icon, Color iconColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 24,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _journeyMini(String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              color: Colors.grey.shade600,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBarChart() {
-    final bars = List.generate(monthlyTrips.length, (i) {
-      return BarChartGroupData(x: i, barRods: [
-        BarChartRodData(toY: monthlyTrips[i].toDouble(), color: const Color(0xFF4F9AFF), width: 12)
-      ]);
+    const monthOrder = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
+    ];
+
+    final bars = List.generate(12, (i) {
+      final monthName = monthOrder[i];
+      final count = monthlyTrips[monthName] ?? 0;
+      return BarChartGroupData(
+        x: i,
+        barRods: [
+          BarChartRodData(
+            toY: count.toDouble(),
+            color: const Color(0xFF4F9AFF),
+            width: 16,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+          )
+        ],
+      );
     });
+
+    final maxValue = monthlyTrips.values.isEmpty
+        ? 5.0
+        : monthlyTrips.values.reduce((a, b) => a > b ? a : b).toDouble();
 
     return BarChart(
       BarChartData(
@@ -243,10 +573,9 @@ class _StatsScreenState extends State<StatsScreen> {
               showTitles: true,
               reservedSize: 28,
               getTitlesWidget: (value, meta) {
-                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                 final idx = value.toInt();
-                final text = (idx >= 0 && idx < months.length) ? months[idx] : '';
-                return Text(text, style: GoogleFonts.poppins(fontSize: 10));
+                final text = (idx >= 0 && idx < monthOrder.length) ? monthOrder[idx] : '';
+                return Text(text, style: GoogleFonts.poppins(fontSize: 9));
               },
             ),
           ),
@@ -256,52 +585,76 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         gridData: FlGridData(show: false),
         borderData: FlBorderData(show: false),
-        maxY: (monthlyTrips.reduce((a, b) => a > b ? a : b).toDouble() + 2),
+        maxY: (maxValue + 2),
       ),
     );
   }
 
-  // -------- Pie chart ----------
   Widget _buildPieChart() {
     final sections = <PieChartSectionData>[];
-    final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.amber];
-    final entries = countries.entries.toList();
+    final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.pink];
+    final entries = countryDistribution.entries.toList();
+    final total = entries.fold<int>(0, (sum, e) => sum + e.value);
+
     for (var i = 0; i < entries.length; i++) {
       final e = entries[i];
-      sections.add(PieChartSectionData(
-        value: e.value,
-        title: '${e.value.toInt()}%',
-        color: colors[i % colors.length],
-        radius: 36,
-        titleStyle: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-      ));
+      final percentage = ((e.value / total) * 100).round();
+      sections.add(
+        PieChartSectionData(
+          value: e.value.toDouble(),
+          title: '$percentage%',
+          color: colors[i % colors.length],
+          radius: 55, // Slightly larger radius
+          titleStyle: GoogleFonts.poppins(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
     }
 
-    return PieChart(PieChartData(sections: sections, sectionsSpace: 4, centerSpaceRadius: 18));
+    return PieChart(
+      PieChartData(
+        sections: sections,
+        sectionsSpace: 2,
+        centerSpaceRadius: 35, // Slightly larger center space
+      ),
+    );
   }
 
   Widget _buildCountriesLegend({double? maxWidth}) {
-    final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.amber];
-    final entries = countries.entries.toList();
+    final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.pink];
+    final entries = countryDistribution.entries.toList();
+
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: List.generate(entries.length, (i) {
         final key = entries[i].key;
         final value = entries[i].value;
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(vertical: 8), // Increased vertical padding
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Container(width: 12, height: 12, decoration: BoxDecoration(color: colors[i % colors.length], shape: BoxShape.circle)),
-              const SizedBox(width: 8),
-              // constrain the legend text so it wraps and doesn't push the row horizontally
+              Container(
+                width: 14, // Slightly larger dot
+                height: 14,
+                decoration: BoxDecoration(
+                  color: colors[i % colors.length],
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 10), // Increased spacing
               Expanded(
                 child: Text(
-                  '$key — ${value.toInt()}%',
+                  '$key ($value)',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(fontSize: 13),
+                  style: GoogleFonts.poppins(
+                    fontSize: 13, // Slightly larger font
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -311,41 +664,61 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  // -------- Line chart ----------
-  Widget _buildLineChart() {
-    final spots = List.generate(distanceTrend.length, (i) => FlSpot(i.toDouble(), distanceTrend[i]));
-    return LineChart(
-      LineChartData(
-        lineBarsData: [
-          LineChartBarData(spots: spots, isCurved: true, color: const Color(0xFF4F9AFF), barWidth: 3, dotData: FlDotData(show: true)),
-        ],
-        titlesData: FlTitlesData(
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 28,
-              getTitlesWidget: (value, meta) {
-                const labels = ['Jan','Feb','Mar','Apr','May','Jun'];
-                final idx = value.toInt();
-                final text = (idx >= 0 && idx < labels.length) ? labels[idx] : '';
-                return Text(text, style: GoogleFonts.poppins(fontSize: 11));
-              },
+  Widget _recentMemoryTile(Map<String, dynamic> entry) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF3D8BFF),
+              shape: BoxShape.circle,
             ),
           ),
-          leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (v, meta) {
-            if (v <= 0.75) return Text('0k', style: GoogleFonts.poppins(fontSize: 10));
-            if (v <= 1.5) return Text('0.75k', style: GoogleFonts.poppins(fontSize: 10));
-            if (v <= 2.25) return Text('1.5k', style: GoogleFonts.poppins(fontSize: 10));
-            if (v <= 3.0) return Text('2.25k', style: GoogleFonts.poppins(fontSize: 10));
-            return Text('', style: GoogleFonts.poppins(fontSize: 10));
-          })),
-          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        ),
-        gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: 0.75),
-        borderData: FlBorderData(show: false),
-        minY: 0,
-        maxY: 3.0,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry['title'] ?? 'Untitled',
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      size: 12,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      entry['visit_start_date'] ?? '',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
