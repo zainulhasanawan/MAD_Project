@@ -17,7 +17,7 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
-  final LatLng _initialCenter = LatLng(33.6844, 73.0479); // Islamabad
+  final LatLng _initialCenter = LatLng(33.6844, 73.0479);
   LatLng? _tappedLocation;
   Map<String, dynamic>? _locationInfo;
   bool _isLoading = false;
@@ -31,9 +31,12 @@ class _MapScreenState extends State<MapScreen> {
   final supabase = Supabase.instance.client;
   final ImagePicker _imagePicker = ImagePicker();
 
-  // CHANGED: support multiple images
+  // Store actual DateTime objects for validation
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  // Support multiple images
   List<File> _selectedImages = [];
-  // (we don't keep a single uploaded URL variable; we'll return a list)
 
   @override
   void dispose() {
@@ -55,7 +58,6 @@ class _MapScreenState extends State<MapScreen> {
 
       if (images != null && images.isNotEmpty) {
         setState(() {
-          // convert XFile -> File and append
           _selectedImages.addAll(images.map((x) => File(x.path)));
         });
       }
@@ -74,12 +76,11 @@ class _MapScreenState extends State<MapScreen> {
       final user = supabase.auth.currentUser;
       if (user == null) return uploadedUrls;
 
-      final bucket = 'Memories'; // ensure this bucket exists in Supabase
+      final bucket = 'Memories';
 
       for (final file in _selectedImages) {
         final fileName = '${user.id}/${DateTime.now().millisecondsSinceEpoch}_${_selectedImages.indexOf(file)}.jpg';
 
-        // upload the file
         try {
           await supabase.storage.from(bucket).upload(
             fileName,
@@ -87,19 +88,14 @@ class _MapScreenState extends State<MapScreen> {
             fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
           );
         } catch (e) {
-          // if upload failed for a file, continue with others but show snackbar
           _showErrorSnackBar('Failed to upload one of the images: $e');
           continue;
         }
 
-        // get public url
         try {
           final imageUrl = supabase.storage.from(bucket).getPublicUrl(fileName);
-          // previous code used getPublicUrl(...) directly; mirror that behavior.
-          // If your supabase client returns a complex object, adapt accordingly.
           uploadedUrls.add(imageUrl);
         } catch (e) {
-          // If fetching public url failed, still continue
           _showErrorSnackBar('Failed to get public URL for an image: $e');
         }
       }
@@ -160,6 +156,14 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
+    // Validate dates
+    if (_startDate != null && _endDate != null) {
+      if (_startDate!.isAfter(_endDate!)) {
+        _showErrorSnackBar('Start date cannot be after end date');
+        return;
+      }
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -170,12 +174,10 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      // Upload selected images (if any) and get URLs
       List<String> imageUrls = await _uploadImages();
 
-      // If no images were uploaded, use a default placeholder path (optional)
       if (imageUrls.isEmpty) {
-        imageUrls = ['assets/images/default.jpg'];
+        imageUrls = [''];
       }
 
       final entryData = {
@@ -189,7 +191,6 @@ class _MapScreenState extends State<MapScreen> {
         'description': _descController.text.trim(),
         'visit_start_date': _startDateController.text.trim(),
         'visit_end_date': _endDateController.text.trim(),
-        // IMPORTANT: Save list of urls (Supabase Postgres text[] field)
         'image_url': imageUrls,
       };
 
@@ -200,6 +201,8 @@ class _MapScreenState extends State<MapScreen> {
       _startDateController.clear();
       _endDateController.clear();
       _descController.clear();
+      _startDate = null;
+      _endDate = null;
       setState(() {
         _selectedImages.clear();
       });
@@ -260,12 +263,9 @@ class _MapScreenState extends State<MapScreen> {
 
                       const SizedBox(height: 24),
 
-                      // Image area: tap to add more images (pickMultiImage).
-                      // Show horizontal gallery of selected images with remove buttons.
                       GestureDetector(
                         onTap: () async {
                           await _pickImages();
-                          // update modal state to reflect new selection
                           setModalState(() {});
                         },
                         child: Container(
@@ -278,7 +278,6 @@ class _MapScreenState extends State<MapScreen> {
                           child: _selectedImages.isNotEmpty
                               ? Stack(
                             children: [
-                              // Image gallery
                               Positioned.fill(
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -301,7 +300,6 @@ class _MapScreenState extends State<MapScreen> {
                                                 fit: BoxFit.cover,
                                               ),
                                             ),
-                                            // remove button
                                             Positioned(
                                               right: 8,
                                               top: 8,
@@ -330,7 +328,6 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ),
                               ),
-                              // overlay hint
                               if (_selectedImages.length < 1)
                                 Center(
                                   child: Column(
@@ -379,12 +376,16 @@ class _MapScreenState extends State<MapScreen> {
                         onTap: () async {
                           final picked = await showDatePicker(
                             context: context,
-                            initialDate: DateTime.now(),
+                            initialDate: _startDate ?? DateTime.now(),
                             firstDate: DateTime(2000),
                             lastDate: DateTime.now(),
                           );
                           if (picked != null) {
-                            _startDateController.text = _formatDate(picked);
+                            setState(() {
+                              _startDate = picked;
+                              _startDateController.text = _formatDate(picked);
+                            });
+                            setModalState(() {});
                           }
                         },
                       ),
@@ -399,14 +400,25 @@ class _MapScreenState extends State<MapScreen> {
                         readOnly: true,
                         decoration: _dateDecoration(),
                         onTap: () async {
+                          // Set initial date intelligently
+                          DateTime initialDate = DateTime.now();
+                          if (_startDate != null) {
+                            // If start date is set, use it as minimum
+                            initialDate = _endDate ?? _startDate!;
+                          }
+
                           final picked = await showDatePicker(
                             context: context,
-                            initialDate: DateTime.now(),
-                            firstDate: DateTime(2000),
+                            initialDate: initialDate,
+                            firstDate: _startDate ?? DateTime(2000),
                             lastDate: DateTime.now(),
                           );
                           if (picked != null) {
-                            _endDateController.text = _formatDate(picked);
+                            setState(() {
+                              _endDate = picked;
+                              _endDateController.text = _formatDate(picked);
+                            });
+                            setModalState(() {});
                           }
                         },
                       ),
@@ -426,7 +438,6 @@ class _MapScreenState extends State<MapScreen> {
 
                       ElevatedButton(
                         onPressed: _isSaving ? null : () async {
-                          // Use modal's set state while saving to reflect loading in modal if needed
                           setModalState(() {});
                           await _saveToSupabase();
                         },
@@ -435,7 +446,9 @@ class _MapScreenState extends State<MapScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: _isSaving ? const CircularProgressIndicator(color: Colors.white) : Text("Add to Timeline", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
+                        child: _isSaving
+                            ? const CircularProgressIndicator(color: Colors.white)
+                            : Text("Add to Timeline", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
                       ),
                     ],
                   ),
@@ -504,6 +517,15 @@ class _MapScreenState extends State<MapScreen> {
                 fontWeight: FontWeight.w600)),
         centerTitle: true,
         backgroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Reset Rotation',
+            onPressed: () {
+              _mapController.rotate(0.0);
+            },
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -513,6 +535,13 @@ class _MapScreenState extends State<MapScreen> {
               initialCenter: _initialCenter,
               initialZoom: 13.0,
               onTap: (tapPos, point) => _fetchLocationInfo(point),
+              // Allow rotation but with threshold to prevent accidental rotation
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all,
+                rotationThreshold: 20.0, // Requires more deliberate rotation gesture
+                pinchZoomThreshold: 0.5, // Makes zoom more sensitive
+                pinchMoveThreshold: 40.0, // Reduces accidental movement during zoom
+              ),
             ),
             children: [
               TileLayer(
