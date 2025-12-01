@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({Key? key}) : super(key: key);
@@ -14,6 +16,8 @@ class _StatsScreenState extends State<StatsScreen> {
   final supabase = Supabase.instance.client;
 
   bool _isLoading = true;
+  bool _isLoadingSuggestions = false;
+  String? _aiSuggestions;
 
   // Statistics from database
   int totalEntries = 0;
@@ -28,6 +32,11 @@ class _StatsScreenState extends State<StatsScreen> {
   Map<String, int> monthlyTrips = {};
   Map<String, int> countryDistribution = {};
   List<Map<String, dynamic>> recentEntries = [];
+
+  // Groq API (keep your key here or move to .env later)
+  static const String _groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+  static const String _groqApiKey = "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";
+  static const String _model = "llama-3.1-8b-instant";
 
   @override
   void initState() {
@@ -59,7 +68,6 @@ class _StatsScreenState extends State<StatsScreen> {
         firstTripDate = statsResponse['first_trip_date'];
         lastTripDate = statsResponse['last_trip_date'];
 
-        // Parse countries and cities from JSONB
         final countriesJson = statsResponse['countries_visited'];
         if (countriesJson is List) {
           countriesVisited = List<String>.from(countriesJson);
@@ -79,13 +87,8 @@ class _StatsScreenState extends State<StatsScreen> {
           .order('created_at', ascending: false);
 
       if (entries.isNotEmpty) {
-        // Calculate monthly trips for current year
         _calculateMonthlyTrips(entries);
-
-        // Calculate country distribution
         _calculateCountryDistribution(entries);
-
-        // Get recent entries
         recentEntries = entries.take(5).toList().cast<Map<String, dynamic>>();
       }
 
@@ -108,17 +111,13 @@ class _StatsScreenState extends State<StatsScreen> {
           if (parts.length >= 3) {
             final monthStr = parts[0];
             final year = int.tryParse(parts[2].replaceAll(',', ''));
-
             if (year == currentYear) {
               monthCounts[monthStr] = (monthCounts[monthStr] ?? 0) + 1;
             }
           }
-        } catch (e) {
-          // Skip if date parsing fails
-        }
+        } catch (_) {}
       }
     }
-
     monthlyTrips = monthCounts;
   }
 
@@ -132,11 +131,89 @@ class _StatsScreenState extends State<StatsScreen> {
       }
     }
 
-    // Sort and get top 5
-    final sortedCountries = countryCount.entries.toList()
+    final sorted = countryCount.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
+    countryDistribution = Map.fromEntries(sorted.take(5));
+  }
 
-    countryDistribution = Map.fromEntries(sortedCountries.take(5));
+  // ------------------- AI SUGGESTIONS -------------------
+  Future<void> _generateAISuggestions() async {
+    if (countriesVisited.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Add some travel memories first!', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoadingSuggestions = true);
+
+    try {
+      final visitedCountries = countriesVisited.join(', ');
+      final visitedCities = citiesVisited.take(12).join(', ');
+
+      final prompt = '''
+Based on my travel history, suggest 3 new travel destinations I might enjoy.
+
+My travel profile:
+- Countries visited: $visitedCountries
+- Cities explored: $visitedCities
+- Total trips: $totalEntries
+
+Give me:
+1. Three destination recommendations with brief explanations (2-3 sentences each)
+2. Why each fits my travel style
+3. Best time to visit
+
+Format each as:
+[Destination Name]
+[2-3 sentences]
+Best time: [months/season]
+''';
+
+      final response = await http.post(
+        Uri.parse(_groqUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_groqApiKey',
+        },
+        body: jsonEncode({
+          'model': _model,
+          'messages': [
+            {
+              'role': 'system',
+              'content':
+              'You are a friendly travel advisor. Be enthusiastic, concise, and helpful.'
+            },
+            {'role': 'user', 'content': prompt}
+          ],
+          'temperature': 0.8,
+          'max_tokens': 800,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final text = data['choices']?[0]?['message']?['content'] ?? 'No suggestions received.';
+        setState(() {
+          _aiSuggestions = text.trim();
+          _isLoadingSuggestions = false;
+        });
+      } else {
+        throw Exception('API error ${response.statusCode}');
+      }
+    } catch (e) {
+      print('AI suggestion error: $e');
+      setState(() => _isLoadingSuggestions = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to generate suggestions. Try again.', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
@@ -146,9 +223,7 @@ class _StatsScreenState extends State<StatsScreen> {
         backgroundColor: const Color(0xFFF8F8FC),
         appBar: _buildAppBar(),
         body: const Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF3D8BFF),
-          ),
+          child: CircularProgressIndicator(color: Color(0xFF3D8BFF)),
         ),
       );
     }
@@ -170,8 +245,6 @@ class _StatsScreenState extends State<StatsScreen> {
             final double availH = constraints.maxHeight;
             final double availW = constraints.maxWidth;
             final double barChartH = (availH * 0.20).clamp(110.0, 200.0);
-
-            // Increased pie chart height for more vertical space
             final double pieChartH = (availH * 0.25).clamp(140.0, 220.0);
 
             return RefreshIndicator(
@@ -179,38 +252,24 @@ class _StatsScreenState extends State<StatsScreen> {
               color: const Color(0xFF3D8BFF),
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: EdgeInsets.fromLTRB(
-                    16, 16, 16, kBottomNavigationBarHeight + 24),
+                padding: EdgeInsets.fromLTRB(16, 16, 16, kBottomNavigationBarHeight + 24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Summary Cards
                     _buildSummaryCards(),
-
+                    const SizedBox(height: 18),
+                    if (firstTripDate != null && lastTripDate != null) _buildJourneyTimeline(),
+                    const SizedBox(height: 18),
+                    if (monthlyTrips.isNotEmpty) _buildMonthlyActivity(barChartH),
+                    const SizedBox(height: 18),
+                    if (countryDistribution.isNotEmpty) _buildCountryDistribution(pieChartH, availW),
                     const SizedBox(height: 18),
 
-                    // Journey Timeline
-                    if (firstTripDate != null && lastTripDate != null)
-                      _buildJourneyTimeline(),
+                    // AI CARD INSERTED HERE
+                    _buildAISuggestionsCard(),
 
                     const SizedBox(height: 18),
-
-                    // Monthly Activity
-                    if (monthlyTrips.isNotEmpty)
-                      _buildMonthlyActivity(barChartH),
-
-                    const SizedBox(height: 18),
-
-                    // Country Distribution
-                    if (countryDistribution.isNotEmpty)
-                      _buildCountryDistribution(pieChartH, availW),
-
-                    const SizedBox(height: 18),
-
-                    // Recent Memories
-                    if (recentEntries.isNotEmpty)
-                      _buildRecentMemories(),
-
+                    if (recentEntries.isNotEmpty) _buildRecentMemories(),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -222,24 +281,386 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
+  Widget _buildAISuggestionsCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF6B46C1).withOpacity(0.1),
+            const Color(0xFF3D8BFF).withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF3D8BFF).withOpacity(0.3), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF6B46C1), Color(0xFF3D8BFF)]),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.auto_awesome, color: Colors.white, size: 26),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your Next Adventure Awaits',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 17),
+                    ),
+                    Text(
+                      'AI-powered suggestions based on your travels',
+                      style: GoogleFonts.poppins(fontSize: 12.5, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Initial State
+          if (_aiSuggestions == null && !_isLoadingSuggestions)
+            Center(
+              child: Column(
+                children: [
+                  Icon(Icons.explore_outlined, size: 70, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Tap below to discover personalized destinations\nbased on the places you\'ve already explored',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(fontSize: 13.5, color: Colors.grey[600], height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    onPressed: _generateAISuggestions,
+                    icon: const Icon(Icons.rocket_launch, size: 22),
+                    label: Text('Find My Next Trip', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 15)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3D8BFF),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Loading
+          if (_isLoadingSuggestions)
+            Center(
+              child: Column(
+                children: [
+                  const CircularProgressIndicator(color: Color(0xFF3D8BFF), strokeWidth: 3),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Analyzing your journey across ${countriesVisited.length} countries...',
+                    style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
+                  ),
+                ],
+              ),
+            ),
+
+          // Results - Column-Based Layout
+          if (_aiSuggestions != null && !_isLoadingSuggestions)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Reference to user's travel history
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3D8BFF).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF3D8BFF).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.analytics_outlined, color: const Color(0xFF2A6BFF), size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Based on your visits to ${countriesVisited.take(5).join(', ')}${countriesVisited.length > 5 ? ' and more' : ''}',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF2A6BFF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Suggestions in vertical column layout
+                ..._buildStyledSuggestions(_aiSuggestions!),
+
+                const SizedBox(height: 20),
+                // Action buttons
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => setState(() => _aiSuggestions = null),
+                      icon: const Icon(Icons.clear, size: 19),
+                      label: Text('Clear', style: GoogleFonts.poppins(fontSize: 13.5)),
+                      style: TextButton.styleFrom(foregroundColor: Colors.grey[600]),
+                    ),
+                    const SizedBox(width: 10),
+                    TextButton.icon(
+                      onPressed: _generateAISuggestions,
+                      icon: const Icon(Icons.refresh, size: 19),
+                      label: Text('New Ideas', style: GoogleFonts.poppins(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      style: TextButton.styleFrom(foregroundColor: const Color(0xFF3D8BFF)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+// Helper method to build styled suggestions in column format
+  List<Widget> _buildStyledSuggestions(String suggestions) {
+    final lines = suggestions.split('\n').where((line) => line.trim().isNotEmpty).toList();
+    final widgets = <Widget>[];
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+
+      // Check if it's a numbered destination (e.g., "1. Country Name" or "1. **Country Name**")
+      final destinationMatch = RegExp(r'^(\d+)\.\s*\*?\*?(.+?)\*?\*?$').firstMatch(line);
+
+      if (destinationMatch != null) {
+        final number = destinationMatch.group(1);
+        final destination = destinationMatch.group(2)?.trim() ?? '';
+
+        // Look ahead for description lines
+        final descriptionLines = <String>[];
+        int j = i + 1;
+        while (j < lines.length && !RegExp(r'^\d+\.').hasMatch(lines[j])) {
+          final descLine = lines[j].trim();
+          if (descLine.isNotEmpty && !descLine.startsWith('*') && !descLine.startsWith('-')) {
+            descriptionLines.add(descLine);
+          }
+          j++;
+        }
+
+        // Create destination card
+        widgets.add(
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.grey[300]!, width: 1),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Destination header
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6B46C1), Color(0xFF3D8BFF)],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          number!,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            destination,
+                            style: GoogleFonts.poppins(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
+                              height: 1.3,
+                            ),
+                          ),
+                          if (descriptionLines.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              descriptionLines.join(' '),
+                              style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                color: Colors.grey[700],
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+
+        // Skip the description lines we've already processed
+        i = j - 1;
+      }
+    }
+
+    if (widgets.isEmpty) {
+      // Fallback if parsing fails - display as simple text
+      widgets.add(
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.grey[300]!, width: 1),
+          ),
+          child: Text(
+            suggestions,
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.grey[800],
+              height: 1.6,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return widgets;
+  }
+  // Helper: Converts raw AI text into beautifully styled widgets
+  List<Widget> _parseAndStyleSuggestions(String rawText) {
+    final lines = rawText.split('\n');
+    final List<Widget> widgets = [];
+    String? currentTitle;
+    bool isFirstLine = true;
+
+    for (var line in lines) {
+      line = line.trim();
+      if (line.isEmpty) continue;
+
+      // Detect destination title (usually starts with number or bold text)
+      if (line.startsWith(RegExp(r'^\d+\.|[A-Z][a-zA-Z\s,&]+:')) ||
+          line.contains(' in ') ||
+          line.length > 5 && line[0] == line[0].toUpperCase() && !line.contains('.')) {
+
+        if (currentTitle != null) {
+          widgets.add(const SizedBox(height: 20));
+        }
+
+        widgets.add(
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Color(0xFF3D8BFF), Color(0xFF6B46C1)]),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                const Text(' Popular Destination ', style: TextStyle(fontSize: 18)),
+                Expanded(
+                  child: Text(
+                    line.replaceAll(RegExp(r'^\d+\.\s*|[:]$'), '').trim(),
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 17,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        currentTitle = line;
+        isFirstLine = false;
+      }
+      // Best time to visit
+      else if (line.toLowerCase().contains('best time') || line.contains('📅')) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 8, left: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.wb_sunny, color: Color(0xFFFFB800), size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  line.replaceAll('Best time:', '').replaceAll('📅', '').trim(),
+                  style: GoogleFonts.poppins(fontSize: 13.5, fontWeight: FontWeight.w600, color: const Color(0xFF2E7D32)),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      // Regular description lines
+      else if (line.isNotEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            child: Text(
+              line.replaceAll('*', '').trim(),
+              style: GoogleFonts.poppins(fontSize: 14, height: 1.55, color: Colors.black87),
+            ),
+          ),
+        );
+      }
+    }
+
+    return widgets;
+  }
   AppBar _buildAppBar() {
     return AppBar(
       backgroundColor: Colors.white,
       elevation: 0,
       centerTitle: true,
-      title: Text(
-        'Statistics',
-        style: GoogleFonts.poppins(
-          color: Colors.black87,
-          fontWeight: FontWeight.w600,
-          fontSize: 18,
-        ),
-      ),
+      title: Text('Statistics', style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 18)),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Color(0xFF3D8BFF)),
-          onPressed: _loadStatistics,
-        ),
+        IconButton(icon: const Icon(Icons.refresh, color: Color(0xFF3D8BFF)), onPressed: _loadStatistics),
       ],
     );
   }
@@ -249,28 +670,11 @@ class _StatsScreenState extends State<StatsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.bar_chart_outlined,
-            size: 80,
-            color: Colors.grey[300],
-          ),
+          Icon(Icons.bar_chart_outlined, size: 80, color: Colors.grey[300]),
           const SizedBox(height: 16),
-          Text(
-            'No travel data yet',
-            style: GoogleFonts.poppins(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[400],
-            ),
-          ),
+          Text('No travel data yet', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.grey[400])),
           const SizedBox(height: 8),
-          Text(
-            'Start adding memories to see your stats',
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.grey[400],
-            ),
-          ),
+          Text('Start adding memories to see your stats', style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[400])),
         ],
       ),
     );
@@ -281,178 +685,10 @@ class _StatsScreenState extends State<StatsScreen> {
       spacing: 12,
       runSpacing: 12,
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: _statCard(
-            'Total Memories',
-            totalEntries.toString(),
-            Icons.collections_bookmark,
-            Colors.blue,
-          ),
-        ),
-        SizedBox(
-          width: double.infinity,
-          child: _statCard(
-            'Countries Visited',
-            totalCountries.toString(),
-            Icons.public,
-            Colors.green,
-          ),
-        ),
-        SizedBox(
-          width: double.infinity,
-          child: _statCard(
-            'Cities Explored',
-            totalCities.toString(),
-            Icons.location_city,
-            Colors.orange,
-          ),
-        ),
+        SizedBox(width: double.infinity, child: _statCard('Total Memories', totalEntries.toString(), Icons.collections_bookmark, Colors.blue)),
+        SizedBox(width: double.infinity, child: _statCard('Countries Visited', totalCountries.toString(), Icons.public, Colors.green)),
+        SizedBox(width: double.infinity, child: _statCard('Cities Explored', totalCities.toString(), Icons.location_city, Colors.orange)),
       ],
-    );
-  }
-
-  Widget _buildJourneyTimeline() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.timeline,
-                color: Color(0xFF3D8BFF),
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Your Journey',
-                style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _journeyMini('First Trip', firstTripDate!),
-              Container(
-                width: 1,
-                height: 40,
-                color: Colors.grey[300],
-              ),
-              _journeyMini('Latest Trip', lastTripDate!),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMonthlyActivity(double chartHeight) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Monthly Activity ${DateTime.now().year}',
-            style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: chartHeight,
-            child: _buildBarChart(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCountryDistribution(double chartHeight, double availWidth) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18), // Increased padding
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Top Countries',
-            style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 20), // Increased spacing
-          SizedBox(
-            height: chartHeight,
-            child: Row(
-              children: [
-                Flexible(
-                  flex: 3,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: _buildPieChart(),
-                  ),
-                ),
-                Flexible(
-                  flex: 2,
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: _buildCountriesLegend(maxWidth: availWidth * 0.45),
-                  ),
-                ),
-              ],
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentMemories() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Recent Memories',
-            style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 12),
-          ...recentEntries.map((entry) => _recentMemoryTile(entry)),
-        ],
-      ),
     );
   }
 
@@ -462,22 +698,13 @@ class _StatsScreenState extends State<StatsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
+            decoration: BoxDecoration(color: iconColor.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
             child: Icon(icon, color: iconColor, size: 24),
           ),
           const SizedBox(width: 14),
@@ -485,25 +712,40 @@ class _StatsScreenState extends State<StatsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    fontSize: 13,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
+                Text(title, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600)),
                 const SizedBox(height: 4),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 24,
-                  ),
-                ),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 24)),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJourneyTimeline() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.timeline, color: Color(0xFF3D8BFF), size: 20),
+              const SizedBox(width: 8),
+              Text('Your Journey', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _journeyMini('First Trip', firstTripDate!),
+              Container(width: 1, height: 40, color: Colors.grey[300]),
+              _journeyMini('Latest Trip', lastTripDate!),
+            ],
           ),
         ],
       ),
@@ -515,32 +757,16 @@ class _StatsScreenState extends State<StatsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              color: Colors.grey.shade600,
-              fontSize: 12,
-            ),
-          ),
+          Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
           const SizedBox(height: 6),
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-          ),
+          Text(value, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
         ],
       ),
     );
   }
 
-  Widget _buildBarChart() {
-    const monthOrder = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
-    ];
+  Widget _buildMonthlyActivity(double chartHeight) {
+    const monthOrder = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
     final bars = List.generate(12, (i) {
       final monthName = monthOrder[i];
@@ -558,39 +784,54 @@ class _StatsScreenState extends State<StatsScreen> {
       );
     });
 
-    final maxValue = monthlyTrips.values.isEmpty
-        ? 5.0
-        : monthlyTrips.values.reduce((a, b) => a > b ? a : b).toDouble();
+    final maxValue = monthlyTrips.values.isEmpty ? 5.0 : monthlyTrips.values.reduce((a, b) => a > b ? a : b).toDouble() + 2;
 
-    return BarChart(
-      BarChartData(
-        barGroups: bars,
-        alignment: BarChartAlignment.spaceAround,
-        titlesData: FlTitlesData(
-          show: true,
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 28,
-              getTitlesWidget: (value, meta) {
-                final idx = value.toInt();
-                final text = (idx >= 0 && idx < monthOrder.length) ? monthOrder[idx] : '';
-                return Text(text, style: GoogleFonts.poppins(fontSize: 9));
-              },
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Monthly Activity ${DateTime.now().year}', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: chartHeight,
+            child: BarChart(
+              BarChartData(
+                barGroups: bars,
+                alignment: BarChartAlignment.spaceAround,
+                titlesData: FlTitlesData(
+                  show: true,
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 28,
+                      getTitlesWidget: (value, meta) {
+                        final idx = value.toInt();
+                        return Text(
+                          (idx >= 0 && idx < monthOrder.length) ? monthOrder[idx] : '',
+                          style: GoogleFonts.poppins(fontSize: 9),
+                        );
+                      },
+                    ),
+                  ),
+                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                ),
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                maxY: maxValue,
+              ),
             ),
           ),
-          leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        ),
-        gridData: FlGridData(show: false),
-        borderData: FlBorderData(show: false),
-        maxY: (maxValue + 2),
+        ],
       ),
     );
   }
 
-  Widget _buildPieChart() {
+  Widget _buildCountryDistribution(double chartHeight, double availWidth) {
     final sections = <PieChartSectionData>[];
     final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.pink];
     final entries = countryDistribution.entries.toList();
@@ -604,21 +845,31 @@ class _StatsScreenState extends State<StatsScreen> {
           value: e.value.toDouble(),
           title: '$percentage%',
           color: colors[i % colors.length],
-          radius: 55, // Slightly larger radius
-          titleStyle: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
+          radius: 55,
+          titleStyle: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
         ),
       );
     }
 
-    return PieChart(
-      PieChartData(
-        sections: sections,
-        sectionsSpace: 2,
-        centerSpaceRadius: 35, // Slightly larger center space
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Top Countries', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: chartHeight,
+            child: Row(
+              children: [
+                Flexible(flex: 3, child: Padding(padding: const EdgeInsets.only(right: 12), child: PieChart(PieChartData(sections: sections, sectionsSpace: 2, centerSpaceRadius: 35)))),
+                Flexible(flex: 2, child: _buildCountriesLegend(maxWidth: availWidth * 0.45)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -627,40 +878,41 @@ class _StatsScreenState extends State<StatsScreen> {
     final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.pink];
     final entries = countryDistribution.entries.toList();
 
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(entries.length, (i) {
-        final key = entries[i].key;
-        final value = entries[i].value;
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8), // Increased vertical padding
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 14, // Slightly larger dot
-                height: 14,
-                decoration: BoxDecoration(
-                  color: colors[i % colors.length],
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 10), // Increased spacing
-              Expanded(
-                child: Text(
-                  '$key ($value)',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(
-                    fontSize: 13, // Slightly larger font
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }),
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(entries.length, (i) {
+          final key = entries[i].key;
+          final value = entries[i].value;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Container(width: 14, height: 14, decoration: BoxDecoration(color: colors[i % colors.length], shape: BoxShape.circle)),
+                const SizedBox(width: 10),
+                Expanded(child: Text('$key ($value)', style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500))),
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildRecentMemories() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Recent Memories', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, fontSize: 16)),
+          const SizedBox(height: 12),
+          ...recentEntries.map((entry) => _recentMemoryTile(entry)),
+        ],
+      ),
     );
   }
 
@@ -668,51 +920,22 @@ class _StatsScreenState extends State<StatsScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
+      decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[200]!)),
       child: Row(
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: const BoxDecoration(
-              color: Color(0xFF3D8BFF),
-              shape: BoxShape.circle,
-            ),
-          ),
+          Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF3D8BFF), shape: BoxShape.circle)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  entry['title'] ?? 'Untitled',
-                  style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(entry['title'] ?? 'Untitled', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Icon(
-                      Icons.calendar_today,
-                      size: 12,
-                      color: Colors.grey[600],
-                    ),
+                    Icon(Icons.calendar_today, size: 12, color: Colors.grey[600]),
                     const SizedBox(width: 4),
-                    Text(
-                      entry['visit_start_date'] ?? '',
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
+                    Text(entry['visit_start_date'] ?? '', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
                   ],
                 ),
               ],

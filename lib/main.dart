@@ -43,7 +43,6 @@ class TravelMemoryApp extends StatelessWidget {
   }
 }
 
-// Check if user is logged in
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({Key? key}) : super(key: key);
 
@@ -119,7 +118,6 @@ class _MainShellState extends State<MainShell> {
           ),
         ),
         actions: [
-          // Profile Avatar Button
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: GestureDetector(
