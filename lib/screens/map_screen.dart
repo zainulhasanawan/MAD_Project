@@ -510,23 +510,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FC),
-      appBar: AppBar(
-        title: Text("Map",
-            style: GoogleFonts.poppins(
-                color: Colors.black87,
-                fontWeight: FontWeight.w600)),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Reset Rotation',
-            onPressed: () {
-              _mapController.rotate(0.0);
-            },
-          ),
-        ],
-      ),
+      // Removed app bar since MainShell provides it
       body: Stack(
         children: [
           FlutterMap(
