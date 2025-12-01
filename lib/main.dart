@@ -7,13 +7,19 @@ import 'screens/feed_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/auth_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 🔥 Load the .env file BEFORE anything else
+  await dotenv.load(fileName: ".env");
+
+  // Initialize Supabase
   await Supabase.initialize(
     url: 'https://coyecfjmeutnpxqmxckx.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNveWVjZmptZXV0bnB4cW14Y2t4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQzOTgwMjgsImV4cCI6MjA3OTk3NDAyOH0.H78wPnjrwtYHJ-wvN8ELYORFDApVTtFEyoWp9nMg6mk',
+    anonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNveWVjZmptZXV0bnB4cW14Y2t4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQzOTgwMjgsImV4cCI6MjA3OTk3NDAyOH0.H78wPnjrwtYHJ-wvN8ELYORFDApVTtFEyoWp9nMg6mk',
   );
 
   runApp(const TravelMemoryApp());
@@ -51,7 +57,6 @@ class AuthWrapper extends StatelessWidget {
     return StreamBuilder(
       stream: supabase.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        // Check if user is logged in
         if (supabase.auth.currentUser != null) {
           return const MainShell();
         }
@@ -70,6 +75,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+
   final List<Widget> _pages = const [
     MapScreen(),
     TimelineScreen(),
@@ -155,7 +161,9 @@ class _MainShellState extends State<MainShell> {
           ),
         ],
       ),
+
       body: SafeArea(child: _pages[_currentIndex]),
+
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           boxShadow: [

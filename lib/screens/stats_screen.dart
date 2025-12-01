@@ -4,7 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 class StatsScreen extends StatefulWidget {
   const StatsScreen({Key? key}) : super(key: key);
 
@@ -18,8 +18,6 @@ class _StatsScreenState extends State<StatsScreen> {
   bool _isLoading = true;
   bool _isLoadingSuggestions = false;
   String? _aiSuggestions;
-
-  // Statistics from database
   int totalEntries = 0;
   int totalCountries = 0;
   int totalCities = 0;
@@ -27,15 +25,12 @@ class _StatsScreenState extends State<StatsScreen> {
   List<String> citiesVisited = [];
   String? firstTripDate;
   String? lastTripDate;
-
-  // Calculated data
   Map<String, int> monthlyTrips = {};
   Map<String, int> countryDistribution = {};
   List<Map<String, dynamic>> recentEntries = [];
 
-  // Groq API (keep your key here or move to .env later)
   static const String _groqUrl = "https://api.groq.com/openai/v1/chat/completions";
-  static const String _groqApiKey = "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";
+  static final String _groqApiKey = dotenv.env['GROQ_API_KEY'] ?? '';
   static const String _model = "llama-3.1-8b-instant";
 
   @override
