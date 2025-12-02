@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'trip_detail_screen.dart';
 
 class TimelineScreen extends StatefulWidget {
@@ -23,23 +24,41 @@ class _TimelineScreenState extends State<TimelineScreen> {
   }
 
   Future<void> _loadTripsFromSupabase() async {
+    setState(() => isLoading = true);
+
     try {
-      final userId = supabase.auth.currentUser!.id;
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        setState(() {
+          trips = [];
+          isLoading = false;
+        });
+        return;
+      }
 
       final response = await supabase
           .from('travel_entries')
           .select()
-          .eq('user_id', userId)
+          .eq('user_id', user.id)
           .order('id', ascending: false);
+
+      if (response == null) {
+        setState(() {
+          trips = [];
+          isLoading = false;
+        });
+        return;
+      }
 
       List<Map<String, dynamic>> formatted = [];
 
-      for (final row in response) {
-        final String? startDate = row['visit_start_date'];
-        final String? endDate = row['visit_end_date'];
+      for (final dynamic row in response) {
+        final String? startDate =
+        (row['visit_start_date'] is String) ? row['visit_start_date'] : null;
+        final String? endDate =
+        (row['visit_end_date'] is String) ? row['visit_end_date'] : null;
 
         String dateRange = '';
-
         if (startDate != null && startDate.isNotEmpty) {
           if (endDate != null && endDate.isNotEmpty && endDate != startDate) {
             dateRange = '$startDate – $endDate';
@@ -48,18 +67,34 @@ class _TimelineScreenState extends State<TimelineScreen> {
           }
         }
 
-        /// 🔥 FIX: image_url is ARRAY, not single string
-        List<dynamic>? imgs = row['image_url'];
+        List<dynamic>? imgsDynamic;
+        try {
+          imgsDynamic =
+          (row['image_url'] is List) ? List<dynamic>.from(row['image_url']) : null;
+        } catch (_) {
+          imgsDynamic = null;
+        }
 
-        /// 🔥 Pick first image for cover photo
-        String? coverImage =
-        (imgs != null && imgs.isNotEmpty) ? imgs.first.toString() : null;
+        final placeholderCandidates = {'', 'null', 'error', 'placeholder'};
+        List<String> imgs = [];
+        if (imgsDynamic != null) {
+          for (final item in imgsDynamic) {
+            if (item == null) continue;
+            final s = item.toString().trim();
+            if (s.isEmpty) continue;
+            if (placeholderCandidates.contains(s.toLowerCase())) continue;
+            if (!s.toLowerCase().startsWith('http')) continue;
+            imgs.add(s);
+          }
+        }
+
+        String? coverImage = imgs.isNotEmpty ? imgs.first : null;
 
         formatted.add({
           "id": row['id'],
           "title": row['title'],
           "desc": row['description'],
-          "image_url": imgs,       // full list for detail screen
+          "image_url": imgs,
           "cover_image": coverImage,
           "lat": row['latitude'],
           "lng": row['longitude'],
@@ -69,19 +104,23 @@ class _TimelineScreenState extends State<TimelineScreen> {
         });
       }
 
-      setState(() {
-        trips = formatted;
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          trips = formatted;
+          isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint("Error loading trips: $e");
-      setState(() => isLoading = false);
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
   Future<void> _navigateToMap() async {
-    final result = await Navigator.pushNamed(context, '/map');
-    if (result != null) _loadTripsFromSupabase();
+    final bool? memoryAdded = await Navigator.pushNamed(context, '/map') as bool?;
+    if (memoryAdded == true) {
+      await _loadTripsFromSupabase();
+    }
   }
 
   @override
@@ -110,7 +149,10 @@ class _TimelineScreenState extends State<TimelineScreen> {
           ? const Center(child: CircularProgressIndicator())
           : trips.isEmpty
           ? _buildEmptyState()
-          : _buildTimelineList(),
+          : RefreshIndicator(
+        onRefresh: _loadTripsFromSupabase,
+        child: _buildTimelineList(),
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _navigateToMap,
         backgroundColor: const Color(0xFF3D8BFF),
@@ -131,13 +173,17 @@ class _TimelineScreenState extends State<TimelineScreen> {
         final trip = trips[index];
 
         return GestureDetector(
-          onTap: () {
-            Navigator.push(
+          onTap: () async {
+            final changed = await Navigator.push<bool>(
               context,
               MaterialPageRoute(
                 builder: (_) => TripDetailScreen(trip: trip),
               ),
             );
+
+            if (changed == true) {
+              await _loadTripsFromSupabase();
+            }
           },
           child: Container(
             margin: const EdgeInsets.only(bottom: 20),
@@ -149,13 +195,12 @@ class _TimelineScreenState extends State<TimelineScreen> {
                   color: Colors.black12.withOpacity(0.05),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
-                )
+                ),
               ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                /// 🔥 Cover image (first image)
                 ClipRRect(
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(14),
@@ -163,7 +208,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
                   ),
                   child: _buildCoverImage(trip["cover_image"]),
                 ),
-
                 Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Column(
@@ -176,7 +220,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
                           fontSize: 16,
                         ),
                       ),
-
                       if ((trip["date_range"] ?? '').isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -195,7 +238,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
                             ],
                           ),
                         ),
-
                       const SizedBox(height: 8),
                       Text(
                         trip["desc"] ?? "",
@@ -217,21 +259,25 @@ class _TimelineScreenState extends State<TimelineScreen> {
     );
   }
 
+  /// -------------------------------
+  ///     USE CACHED NETWORK IMAGE
+  /// -------------------------------
   Widget _buildCoverImage(String? imageUrl) {
     if (imageUrl != null && imageUrl.startsWith("http")) {
-      return Image.network(
-        imageUrl,
+      return CachedNetworkImage(
+        imageUrl: imageUrl,
         width: double.infinity,
         height: 180,
         fit: BoxFit.cover,
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return _buildPlaceholderImage();
-        },
-        errorBuilder: (_, __, ___) => _buildPlaceholderImage(),
+
+        /// Reduce resolution to save size & speed
+        memCacheWidth: 700,
+        memCacheHeight: 700,
+
+        placeholder: (_, __) => _buildPlaceholderImage(),
+        errorWidget: (_, __, ___) => _buildPlaceholderImage(),
       );
     }
-
     return _buildPlaceholderImage();
   }
 

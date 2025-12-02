@@ -143,27 +143,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Profile Header Section
             _buildProfileHeader(context, user),
 
             const SizedBox(height: 32),
 
-            // Main Content Cards
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  // Public Profile Card
                   _buildPublicProfileCard(),
 
                   const SizedBox(height: 24),
 
-                  // Account Info Card
                   _buildAccountInfoCard(context, user),
 
                   const SizedBox(height: 24),
 
-                  // Logout Button
                   _buildLogoutButton(),
                 ],
               ),

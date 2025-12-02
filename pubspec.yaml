@@ -20,11 +20,13 @@ dependencies:
   image_picker: ^1.0.4
   file_picker: ^10.3.7
   flutter_dotenv: ^5.1.0
+  cached_network_image: ^3.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1  # Moved to dev_dependencies (correct placement)
 
 flutter:
   uses-material-design: true
@@ -32,3 +34,12 @@ flutter:
   assets:
     - assets/images/
     - .env
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/logo/app_logo.png"
+  adaptive_icon_background: "#3D8BFF"
+  adaptive_icon_foreground: "assets/logo/app_logo.png"
+  remove_alpha_ios: true
+  web: false

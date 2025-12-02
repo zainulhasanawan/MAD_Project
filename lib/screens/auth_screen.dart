@@ -151,7 +151,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 40),
-              // Header
               Center(
                 child: Column(
                   children: [
@@ -196,7 +195,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(height: 40),
 
-              // Tab Bar
               Container(
 
                 padding: const EdgeInsets.all(4),
@@ -224,7 +222,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(height: 32),
 
-              // Tab Bar View
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
@@ -292,7 +289,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: () async {
-                  // Handle forgot password
                   final email = _loginEmailController.text.trim();
                   if (email.isEmpty || !email.contains('@')) {
                     ScaffoldMessenger.of(context).showSnackBar(

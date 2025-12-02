@@ -26,12 +26,29 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     _loadImagesFromTrip();
   }
 
-  // ---------------------------------------------
-  // LOAD IMAGES FROM travel_entries.image_url ARRAY
-  // ---------------------------------------------
+  // FETCH UPDATED TRIP FROM SUPABASE
+  Future<void> fetchTrip() async {
+    try {
+      final updatedTrip = await supabase
+          .from('travel_entries')
+          .select()
+          .eq('id', widget.trip['id'])
+          .single();
+
+      if (updatedTrip != null) {
+        setState(() {
+          widget.trip.addAll(updatedTrip);
+          _loadImagesFromTrip();
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching trip: $e");
+    }
+  }
+
+  // LOAD IMAGES FROM TRIP
   void _loadImagesFromTrip() {
     final imgs = widget.trip['image_url'];
-
     setState(() {
       if (imgs is List) {
         imageList = imgs.map((e) => e.toString()).toList();
@@ -41,9 +58,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     });
   }
 
-  // ---------------------------------------------
-  // MULTIPLE IMAGE PICKER + UPLOAD
-  // ---------------------------------------------
+  // ADD MULTIPLE IMAGES — REMOVE ERROR IMG
   Future<void> _addPhotos() async {
     final pickedFiles = await _picker.pickMultiImage();
     if (pickedFiles.isEmpty) return;
@@ -54,77 +69,73 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       final user = supabase.auth.currentUser!;
       List<String> newUrls = [];
 
+      final cleanedExisting = imageList
+          .where((e) =>
+      !e.contains("error") &&
+          !e.contains("placeholder") &&
+          !e.contains("default") &&
+          e.trim().isNotEmpty)
+          .toList();
+
       for (int i = 0; i < pickedFiles.length; i++) {
         final file = File(pickedFiles[i].path);
-
         final fileName =
-            '${user.id}/${DateTime.now().millisecondsSinceEpoch}_${imageList.length + i}.jpg';
+            '${user.id}/${DateTime.now().millisecondsSinceEpoch}_${cleanedExisting.length + i}.jpg';
 
         await supabase.storage.from("Memories").upload(
           fileName,
           file,
-          fileOptions:
-          const FileOptions(cacheControl: '3600', upsert: false),
+          fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
         );
 
-        final imageUrl =
-        supabase.storage.from("Memories").getPublicUrl(fileName);
-
+        final imageUrl = supabase.storage.from("Memories").getPublicUrl(fileName);
         newUrls.add(imageUrl);
       }
 
-      // Update final array
-      final updatedArray = [...imageList, ...newUrls];
+      final updatedArray = [...cleanedExisting, ...newUrls];
 
       await supabase
           .from("travel_entries")
           .update({"image_url": updatedArray}).eq("id", widget.trip['id']);
 
-      setState(() {
-        imageList = updatedArray;
-      });
+      setState(() => imageList = updatedArray);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Photos added successfully")),
       );
+
+      await fetchTrip();
     } catch (e) {
       debugPrint("Upload error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed: $e")),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Failed: $e")));
     }
 
     setState(() => isUploading = false);
   }
 
-  // ---------------------------------------------
-  // DELETE ONE IMAGE
-  // ---------------------------------------------
+  // DELETE IMAGE
   Future<void> _deleteImage(String url) async {
-    final path = url.split("/Memories/").last; // extract path after bucket
+    final path = url.split("/Memories/").last;
 
     try {
-      // Delete from bucket
       await supabase.storage.from("Memories").remove([path]);
 
-      // Remove locally
       final updatedList = [...imageList]..remove(url);
 
-      // Update database
       await supabase
           .from("travel_entries")
           .update({"image_url": updatedList}).eq("id", widget.trip['id']);
 
       setState(() => imageList = updatedList);
+      await fetchTrip();
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text("Delete failed: $e")));
     }
   }
 
-  // ---------------------------------------------
-  // EDIT TITLE + DESCRIPTION
-  // ---------------------------------------------
+  // EDIT TITLE + DESC
   Future<void> _editDetails() async {
     final titleController =
     TextEditingController(text: widget.trip['title'] ?? "");
@@ -138,8 +149,12 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: titleController, decoration: const InputDecoration(labelText: "Title")),
-            TextField(controller: descController, decoration: const InputDecoration(labelText: "Description")),
+            TextField(
+                controller: titleController,
+                decoration: const InputDecoration(labelText: "Title")),
+            TextField(
+                controller: descController,
+                decoration: const InputDecoration(labelText: "Description")),
           ],
         ),
         actions: [
@@ -148,14 +163,14 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
               onPressed: () async {
                 await supabase.from("travel_entries").update({
                   "title": titleController.text,
-                  "desc": descController.text,
+                  "description": descController.text,
                 }).eq("id", widget.trip['id']);
 
-                // Update local widget.trip
                 widget.trip['title'] = titleController.text;
                 widget.trip['desc'] = descController.text;
-
                 setState(() {});
+
+                await fetchTrip();
                 Navigator.pop(c);
               },
               child: const Text("Save"))
@@ -164,13 +179,10 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
-  // ---------------------------------------------
   // UI
-  // ---------------------------------------------
   @override
   Widget build(BuildContext context) {
-    String? mainImg =
-    imageList.isNotEmpty ? imageList.first : widget.trip['image_url'];
+    String? mainImg = imageList.isNotEmpty ? imageList.first : null;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FC),
@@ -182,19 +194,16 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           widget.trip['title'] ?? 'Trip Details',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
-
-        // ADD EDIT BUTTON HERE
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.black87),
+          onPressed: () => Navigator.pop(context, true),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.edit, color: Colors.black87),
             onPressed: _editDetails,
           )
         ],
-
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
-        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -208,15 +217,11 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                   height: 220, width: double.infinity, fit: BoxFit.cover)
                   : _placeholder(),
             ),
-
             const SizedBox(height: 16),
-
             _infoCard(),
             const SizedBox(height: 16),
-
             _notesSection(),
             const SizedBox(height: 16),
-
             _photosSection(),
           ],
         ),
@@ -224,9 +229,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
-  // ---------------------------------------------
-  // Info Card
-  // ---------------------------------------------
+  // REUSABLE WIDGETS
   Widget _infoCard() {
     return _card(
       "Visit Details",
@@ -241,9 +244,6 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
-  // ---------------------------------------------
-  // Notes
-  // ---------------------------------------------
   Widget _notesSection() {
     return _card(
       "My Notes",
@@ -256,17 +256,12 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
-  // ---------------------------------------------
-  // PHOTO SCROLLER + DELETE
-  // ---------------------------------------------
   Widget _photosSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text("All Photos",
-            style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        Text("All Photos", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
-
         SizedBox(
           height: 110,
           child: ListView(
@@ -276,7 +271,6 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
               const SizedBox(width: 10),
               ...imageList.map((url) => GestureDetector(
                 onLongPress: () {
-                  // Confirm delete
                   showDialog(
                     context: context,
                     builder: (c) => AlertDialog(
@@ -305,9 +299,6 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
-  // ---------------------------------------------
-  // Shared Widgets
-  // ---------------------------------------------
   Widget _card(String title, List<Widget> children) {
     return Container(
       padding: const EdgeInsets.all(14),
@@ -315,8 +306,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           color: Colors.white, borderRadius: BorderRadius.circular(12)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title,
-            style:
-            GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
         ...children
       ]),
@@ -330,8 +320,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         children: [
           Icon(icon, size: 18, color: const Color(0xFF3D8BFF)),
           const SizedBox(width: 8),
-          Text("$label: ",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          Text("$label: ", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
           Expanded(child: Text(value, style: GoogleFonts.poppins())),
         ],
       ),
@@ -343,8 +332,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       padding: const EdgeInsets.only(right: 10),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: Image.network(url,
-            width: 120, height: 100, fit: BoxFit.cover),
+        child: Image.network(url, width: 120, height: 100, fit: BoxFit.cover),
       ),
     );
   }
@@ -359,8 +347,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       ),
       child: isUploading
           ? const Center(child: CircularProgressIndicator())
-          : const Icon(Icons.add_a_photo_outlined,
-          size: 36, color: Colors.grey),
+          : const Icon(Icons.add_a_photo_outlined, size: 36, color: Colors.grey),
     );
   }
 

@@ -31,11 +31,9 @@ class _MapScreenState extends State<MapScreen> {
   final supabase = Supabase.instance.client;
   final ImagePicker _imagePicker = ImagePicker();
 
-  // Store actual DateTime objects for validation
   DateTime? _startDate;
   DateTime? _endDate;
 
-  // Support multiple images
   List<File> _selectedImages = [];
 
   @override
@@ -47,7 +45,6 @@ class _MapScreenState extends State<MapScreen> {
     super.dispose();
   }
 
-  /// Pick multiple images and append to _selectedImages
   Future<void> _pickImages() async {
     try {
       final List<XFile>? images = await _imagePicker.pickMultiImage(
@@ -66,7 +63,6 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  /// Upload multiple images to Supabase Storage and return list of public URLs
   Future<List<String>> _uploadImages() async {
     final List<String> uploadedUrls = [];
 
@@ -156,7 +152,6 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    // Validate dates
     if (_startDate != null && _endDate != null) {
       if (_startDate!.isAfter(_endDate!)) {
         _showErrorSnackBar('Start date cannot be after end date');
@@ -196,7 +191,6 @@ class _MapScreenState extends State<MapScreen> {
 
       await supabase.from('travel_entries').insert(entryData);
 
-      // Clear form
       _titleController.clear();
       _startDateController.clear();
       _endDateController.clear();
@@ -400,10 +394,8 @@ class _MapScreenState extends State<MapScreen> {
                         readOnly: true,
                         decoration: _dateDecoration(),
                         onTap: () async {
-                          // Set initial date intelligently
                           DateTime initialDate = DateTime.now();
                           if (_startDate != null) {
-                            // If start date is set, use it as minimum
                             initialDate = _endDate ?? _startDate!;
                           }
 
@@ -510,7 +502,6 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FC),
-      // Removed app bar since MainShell provides it
       body: Stack(
         children: [
           FlutterMap(
@@ -519,12 +510,11 @@ class _MapScreenState extends State<MapScreen> {
               initialCenter: _initialCenter,
               initialZoom: 13.0,
               onTap: (tapPos, point) => _fetchLocationInfo(point),
-              // Allow rotation but with threshold to prevent accidental rotation
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all,
-                rotationThreshold: 20.0, // Requires more deliberate rotation gesture
-                pinchZoomThreshold: 0.5, // Makes zoom more sensitive
-                pinchMoveThreshold: 40.0, // Reduces accidental movement during zoom
+                rotationThreshold: 20.0,
+                pinchZoomThreshold: 0.5,
+                pinchMoveThreshold: 40.0,
               ),
             ),
             children: [

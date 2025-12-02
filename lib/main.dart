@@ -12,10 +12,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 Load the .env file BEFORE anything else
   await dotenv.load(fileName: ".env");
 
-  // Initialize Supabase
   await Supabase.initialize(
     url: 'https://coyecfjmeutnpxqmxckx.supabase.co',
     anonKey:

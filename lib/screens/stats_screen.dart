@@ -30,6 +30,7 @@ class _StatsScreenState extends State<StatsScreen> {
   List<Map<String, dynamic>> recentEntries = [];
 
   static const String _groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+  static final String _groqApiKey = dotenv.env['GROQ_API_KEY']!;
   static const String _model = "llama-3.1-8b-instant";
 
   @override
@@ -402,11 +403,9 @@ Best time: [months/season]
                 ),
                 const SizedBox(height: 20),
 
-                // Suggestions in vertical column layout
                 ..._buildStyledSuggestions(_aiSuggestions!),
 
                 const SizedBox(height: 20),
-                // Action buttons
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
