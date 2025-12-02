@@ -116,6 +116,104 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
   }
 
+  // --------------------------
+  // DELETE TRIP FUNCTIONALITY
+  // --------------------------
+  Future<void> _deleteTrip(dynamic tripId, String tripTitle) async { // Changed to dynamic
+    // Show confirmation dialog
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Delete Memory',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'Are you sure you want to delete "$tripTitle"?\nThis action cannot be undone.',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(color: Colors.grey[600]),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              'Delete',
+              style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true) return;
+
+    try {
+      // Show loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              const SizedBox(width: 12),
+              Text('Deleting memory...', style: GoogleFonts.poppins()),
+            ],
+          ),
+          backgroundColor: const Color(0xFF3D8BFF),
+        ),
+      );
+
+      // Delete from Supabase - Handle both String and int IDs
+      await supabase
+          .from('travel_entries')
+          .delete()
+          .eq('id', tripId);
+
+      // Remove from local list
+      setState(() {
+        trips.removeWhere((trip) => trip['id'] == tripId);
+      });
+
+      // Show success message
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text('Memory deleted successfully', style: GoogleFonts.poppins()),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      // Show error message
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text('Failed to delete: $e', style: GoogleFonts.poppins()),
+            ],
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      debugPrint("Error deleting trip: $e");
+    }
+  }
+
   Future<void> _navigateToMap() async {
     final bool? memoryAdded = await Navigator.pushNamed(context, '/map') as bool?;
     if (memoryAdded == true) {
@@ -171,87 +269,238 @@ class _TimelineScreenState extends State<TimelineScreen> {
       itemCount: trips.length,
       itemBuilder: (context, index) {
         final trip = trips[index];
+        final tripId = trip['id']; // Don't cast to int - keep as dynamic
+        final tripTitle = trip['title']?.toString() ?? 'Untitled'; // Ensure string
 
-        return GestureDetector(
-          onTap: () async {
-            final changed = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(
-                builder: (_) => TripDetailScreen(trip: trip),
-              ),
-            );
-
-            if (changed == true) {
-              await _loadTripsFromSupabase();
-            }
-          },
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 20),
+        return Dismissible(
+          key: Key('trip_${tripId.toString()}'), // Convert to string for key
+          direction: DismissDirection.endToStart,
+          background: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Colors.red,
               borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black12.withOpacity(0.05),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
+            ),
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Icon(Icons.delete, color: Colors.white, size: 24),
+                SizedBox(width: 8),
+                Text(
+                  'Delete',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
+                SizedBox(width: 12),
               ],
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(14),
-                    topRight: Radius.circular(14),
-                  ),
-                  child: _buildCoverImage(trip["cover_image"]),
+          ),
+          confirmDismiss: (direction) async {
+            // Show confirmation dialog when swiped
+            final shouldDelete = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text(
+                  'Delete Memory',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                 ),
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
+                content: Text(
+                  'Are you sure you want to delete "$tripTitle"?',
+                  style: GoogleFonts.poppins(),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: Text(
+                      'Cancel',
+                      style: GoogleFonts.poppins(color: Colors.grey[600]),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: Text(
+                      'Delete',
+                      style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            );
+            return shouldDelete ?? false;
+          },
+          onDismissed: (direction) {
+            // Actually delete the trip
+            _deleteTrip(tripId, tripTitle);
+          },
+          child: GestureDetector(
+            onTap: () async {
+              final changed = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TripDetailScreen(trip: trip),
+                ),
+              );
+
+              if (changed == true) {
+                await _loadTripsFromSupabase();
+              }
+            },
+            onLongPress: () {
+              // Show delete option on long press
+              showModalBottomSheet(
+                context: context,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (context) => Container(
+                  padding: const EdgeInsets.all(20),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        trip["title"] ?? "Unknown Location",
-                        style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      if ((trip["date_range"] ?? '').isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.calendar_today,
-                                  size: 12, color: Colors.grey),
-                              const SizedBox(width: 6),
-                              Text(
-                                trip["date_range"],
-                                style: GoogleFonts.poppins(
-                                  color: Colors.grey,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
+                      const SizedBox(height: 20),
+                      ListTile(
+                        leading: const Icon(Icons.delete, color: Colors.red),
+                        title: Text(
+                          'Delete Memory',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                         ),
-                      const SizedBox(height: 8),
-                      Text(
-                        trip["desc"] ?? "",
-                        style: GoogleFonts.poppins(
-                          color: Colors.black87,
-                          fontSize: 13,
+                        subtitle: Text(
+                          'Remove "$tripTitle" from your timeline',
+                          style: GoogleFonts.poppins(color: Colors.grey[600]),
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                        onTap: () {
+                          Navigator.pop(context);
+                          _deleteTrip(tripId, tripTitle);
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.edit, color: Color(0xFF3D8BFF)),
+                        title: Text(
+                          'Edit Details',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TripDetailScreen(trip: trip),
+                            ),
+                          ).then((changed) {
+                            if (changed == true) {
+                              _loadTripsFromSupabase();
+                            }
+                          });
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.cancel, color: Colors.grey),
+                        title: Text(
+                          'Cancel',
+                          style: GoogleFonts.poppins(),
+                        ),
+                        onTap: () => Navigator.pop(context),
                       ),
                     ],
                   ),
-                )
-              ],
+                ),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12.withOpacity(0.05),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      topRight: Radius.circular(14),
+                    ),
+                    child: _buildCoverImage(trip["cover_image"]),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                trip["title"]?.toString() ?? "Unknown Location", // Ensure string
+                                style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                            // Small delete icon in corner
+                            IconButton(
+                              icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                              onPressed: () {
+                                _deleteTrip(tripId, tripTitle);
+                              },
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                        if ((trip["date_range"]?.toString() ?? '').isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today,
+                                    size: 12, color: Colors.grey),
+                                const SizedBox(width: 6),
+                                Text(
+                                  trip["date_range"]?.toString() ?? '', // Ensure string
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.grey,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Text(
+                          trip["desc"]?.toString() ?? "", // Ensure string
+                          style: GoogleFonts.poppins(
+                            color: Colors.black87,
+                            fontSize: 13,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  )
+                ],
+              ),
             ),
           ),
         );
@@ -259,9 +508,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
     );
   }
 
-  /// -------------------------------
   ///     USE CACHED NETWORK IMAGE
-  /// -------------------------------
   Widget _buildCoverImage(String? imageUrl) {
     if (imageUrl != null && imageUrl.startsWith("http")) {
       return CachedNetworkImage(
@@ -269,11 +516,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
         width: double.infinity,
         height: 180,
         fit: BoxFit.cover,
-
-        /// Reduce resolution to save size & speed
         memCacheWidth: 700,
         memCacheHeight: 700,
-
         placeholder: (_, __) => _buildPlaceholderImage(),
         errorWidget: (_, __, ___) => _buildPlaceholderImage(),
       );

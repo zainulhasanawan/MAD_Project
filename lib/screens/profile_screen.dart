@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'public_journal_screen.dart';
@@ -17,7 +16,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isLoading = true;
   bool _isPublic = false;
-  String? _shareToken;
   String? _fullName;
   String? _username;
 
@@ -43,7 +41,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (profile != null) {
         setState(() {
           _isPublic = profile['profile_is_public'] ?? false;
-          _shareToken = profile['share_token'];
           _fullName = profile['full_name'];
           _username = profile['username'];
         });
@@ -86,23 +83,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: GoogleFonts.poppins(),
           ),
           backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  void _copyShareLink() {
-    if (_shareToken != null) {
-      final shareUrl = 'https://yourapp.com/journal/$_shareToken';
-      Clipboard.setData(ClipboardData(text: shareUrl));
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '📋 Link copied to clipboard!',
-            style: GoogleFonts.poppins(),
-          ),
-          backgroundColor: Colors.green,
         ),
       );
     }
@@ -157,9 +137,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   _buildAccountInfoCard(context, user),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 32),
 
-                  _buildLogoutButton(),
+                  // Logout button with margin bottom
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 40),
+                    child: _buildLogoutButton(),
+                  ),
                 ],
               ),
             ),
@@ -391,106 +375,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Action Buttons
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _viewPublicProfile,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF3D8BFF),
-                            backgroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            side: const BorderSide(
-                              color: Color(0xFF3D8BFF),
-                              width: 1.5,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.visibility_rounded, size: 20),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Preview',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                  // Preview Button (centered)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _viewPublicProfile,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF3D8BFF),
+                        backgroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        side: const BorderSide(
+                          color: Color(0xFF3D8BFF),
+                          width: 1.5,
                         ),
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: _copyShareLink,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF3D8BFF),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            shadowColor: const Color(0xFF3D8BFF).withOpacity(0.3),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.share_rounded, size: 20),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Share Link',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Share Link Info
-                  if (_shareToken != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F8FC),
-                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(
-                            Icons.link_rounded,
-                            color: Color(0xFF666687),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'https://yourapp.com/journal/$_shareToken',
-                              overflow: TextOverflow.ellipsis,  // MOVED HERE - Fixes the error
-                              style: GoogleFonts.poppins(
-                                fontSize: 13,
-                                color: const Color(0xFF666687),
-                              ),
+                          const Icon(Icons.visibility_rounded, size: 20),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Preview Public Profile',
+                            style: GoogleFonts.poppins(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -610,82 +527,88 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildLogoutButton() {
-    return ElevatedButton(
-      onPressed: () async {
-        final shouldLogout = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text('Logout', style: GoogleFonts.poppins()),
-            content: Text('Are you sure you want to logout?', style: GoogleFonts.poppins()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: Text('Cancel', style: GoogleFonts.poppins()),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: Text('Logout', style: GoogleFonts.poppins()),
-              ),
-            ],
-          ),
-        );
-
-        if (shouldLogout != true) return;
-
-        try {
-          await supabase.auth.signOut();
-
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Signed out', style: GoogleFonts.poppins()),
-              backgroundColor: Colors.green,
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: () async {
+          final shouldLogout = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Logout', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              content: Text('Are you sure you want to logout?', style: GoogleFonts.poppins()),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text('Cancel', style: GoogleFonts.poppins()),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(
+                    'Logout',
+                    style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
             ),
           );
 
-          // Replace the navigation stack so user can't press back into the app
-          if (!mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const AuthScreen()),
-                (route) => false,
-          );
-        } catch (e) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Logout failed: $e', style: GoogleFonts.poppins()),
-              backgroundColor: Colors.red,
+          if (shouldLogout != true) return;
+
+          try {
+            await supabase.auth.signOut();
+
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Signed out', style: GoogleFonts.poppins()),
+                backgroundColor: Colors.green,
+              ),
+            );
+
+            // Replace the navigation stack so user can't press back into the app
+            if (!mounted) return;
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AuthScreen()),
+                  (route) => false,
+            );
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Logout failed: $e', style: GoogleFonts.poppins()),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: const Color(0xFFF44336),
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: Colors.red.shade200,
+              width: 1,
             ),
-          );
-        }
-      },
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFFF44336),
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 24),
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: Colors.red.shade200,
-            width: 1,
           ),
+          shadowColor: Colors.transparent,
         ),
-        shadowColor: Colors.transparent,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.logout_rounded, size: 22),
-          const SizedBox(width: 12),
-          Text(
-            'Logout',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.logout_rounded, size: 22),
+            const SizedBox(width: 12),
+            Text(
+              'Logout',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

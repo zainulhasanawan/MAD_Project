@@ -116,6 +116,7 @@ class _MapScreenState extends State<MapScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        // debugPrint(data.toString());
         setState(() {
           _locationInfo = data;
           _isLoading = false;
