@@ -109,7 +109,7 @@ class _MainShellState extends State<MainShell> {
     final user = supabase.auth.currentUser;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: (_currentIndex == 1 || _currentIndex == 2) ? null : AppBar(
         elevation: 0,
         backgroundColor: Colors.white,
         centerTitle: false,
